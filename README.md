@@ -18,7 +18,7 @@ and its fine-tuned detectors address this with 119,806 annotated pages in 11 Ind
 42-class label schema, but the models are released as research checkpoints with no end-user interface.
 
 This work presents **IndicDLP Live Layout Studio**, a web application that makes those detectors usable and
-inspectable. It (i) runs three state-of-the-art detectors (YOLOv10x, DocLayout-YOLO and RoDLA) behind one unified
+inspectable. It (i) runs three state-of-the-art detectors (YOLOv10x, DocLayout-YOLO and YOLO26) behind one unified
 interface; (ii) adds a **multi-scale inference** stage and an **ensemble fusion** stage based on Weighted Boxes
 Fusion, which combine the outputs of several passes or several models into a single, more complete prediction;
 (iii) animates the detection process in real time so that the behaviour of each model can be observed region by
@@ -27,7 +27,7 @@ PNG and structured JSON). Qualitative results on a Bengali newspaper of 1872 and
 that the system recovers the masthead, date line, columns, headlines, photograph and advertisements of heavily
 degraded historical pages.
 
-**Keywords:** document layout analysis, Indic scripts, object detection, YOLOv10, DocLayout-YOLO, RoDLA,
+**Keywords:** document layout analysis, Indic scripts, object detection, YOLOv10, DocLayout-YOLO, YOLO26,
 weighted boxes fusion, multilingual user interface, Streamlit.
 
 ---
@@ -69,8 +69,8 @@ and figure extraction, accessibility tagging, search indexing) depend.
 
 ### 1.3 Contributions
 
-1. A **single web interface** over three heterogeneous detectors (two Ultralytics-style YOLO models and one
-   MMDetection-based transformer detector) with automatic detection of which models are installed and available.
+1. A **single web interface** over three detectors (YOLOv10x, DocLayout-YOLO and YOLO26) with automatic
+   detection of which models are installed and available.
 2. A **multi-scale inference** stage that fuses predictions from two input resolutions per model to recover small
    and faint regions.
 3. An **ensemble fusion** stage that merges the predictions of all models with Weighted Boxes Fusion.
@@ -86,7 +86,7 @@ and figure extraction, accessibility tagging, search indexing) depend.
 ## 2. Background and related work
 
 **IndicDLP.** A foundational dataset for multi-lingual and multi-domain layout parsing, with detectors fine-tuned
-on it. This project uses those released checkpoints unchanged.
+on it. This project uses the released YOLOv10x and DocLayout-YOLO checkpoints unchanged and adds its own YOLO26x.
 
 **YOLOv10.** A real-time, single-stage object detector that removes the need for non-maximum suppression at
 inference by using consistent dual assignments during training (Wang et al., NeurIPS 2024). In this project the
@@ -94,10 +94,6 @@ YOLOv10x checkpoint was pretrained on a large synthetic layout corpus and then f
 
 **DocLayout-YOLO.** A YOLOv10-derived detector specialised for documents, using a Global-to-Local Controllable
 Receptive Module to handle both page-level structure and small regions (Zhao et al., 2024).
-
-**RoDLA.** The *Robust Document Layout Analyzer* (Chen et al., CVPR 2024) combines an InternImage backbone with a
-DINO detection head and is designed to remain accurate under document perturbations such as blur, noise and
-warping. It matters here because historical Indic material is often degraded.
 
 **Weighted Boxes Fusion (WBF).** An ensembling method for detectors (Solovyev et al., 2021). Unlike NMS, which
 discards overlapping boxes, WBF clusters overlapping boxes of the same class and *averages their coordinates
@@ -198,7 +194,7 @@ flowchart TB
     subgraph MODELS["Detectors (IndicDLP checkpoints)"]
         M1["YOLOv10x<br/>Ultralytics"]
         M2["DocLayout-YOLO"]
-        M3["RoDLA<br/>InternImage-XL + DINO<br/>(optional)"]
+        M3["YOLO26<br/>Ultralytics"]
     end
 
     subgraph OUT["Output layer"]
@@ -237,7 +233,7 @@ flowchart TB
 | Inference engine | `app.py` (`predict_once`, `run_model`) | Runs a model and converts its output to one common format |
 | Fusion | `app.py` (`fuse`) | Weighted Boxes Fusion for scales and for models |
 | Localisation | `i18n.py` | Names of all 42 classes in 12 languages |
-| Model code | `doclayout-yolo/`, `RoDLA/` | Upstream implementations required by those checkpoints |
+| Model code | `ultralytics`, `doclayout-yolo` (pip packages) | Upstream implementations required by those checkpoints |
 
 ### 4.3 Interaction sequence
 
@@ -246,7 +242,7 @@ sequenceDiagram
     actor User
     participant UI as Streamlit UI
     participant Eng as Inference engine
-    participant Mod as Detector (YOLOv10x / DocLayout-YOLO / RoDLA)
+    participant Mod as Detector (YOLOv10x / DocLayout-YOLO / YOLO26)
     participant Fus as Fusion (WBF)
 
     User->>UI: Upload page or pick sample
@@ -307,8 +303,8 @@ flowchart LR
 
 Every model, whatever its framework, is wrapped so that it returns the same record per region:
 `{box: (x1, y1, x2, y2), conf, cls, label}`. The YOLO-type models are called through their predict API with the user's
-confidence threshold, NMS IoU and inference size. RoDLA is called through MMDetection, and its per-class box arrays
-are filtered by the confidence threshold and converted to the same format. This is what lets fusion, rendering and
+confidence threshold, NMS IoU and inference size.
+This is what lets fusion, rendering and
 export be written once.
 
 ### 5.3 Multi-scale boost
@@ -316,7 +312,7 @@ export be written once.
 Small or faint regions (page numbers, folios, captions, datelines) are easily missed at a single resolution. When
 the boost is enabled, each YOLO-type model is run twice: at the chosen size *S* (default 1024 px, the size used in
 training) and at a second size *S₂* (1280 px, or 1024 px if *S* is already 1280). The two prediction sets are fused as
-described below. RoDLA is run once because its inference is far more expensive.
+described below.
 
 ### 5.4 Weighted Boxes Fusion
 
@@ -360,8 +356,8 @@ speaker before formal use.
 - **Device selection:** CUDA is used when available, otherwise the CPU.
 - **Robust weights handling:** each checkpoint is checked against its expected file size, so a partial download is
   reported instead of crashing the app.
-- **Graceful degradation:** if RoDLA's dependencies (`mmcv`, `mmdet`, compiled DCNv3 operators) are missing, RoDLA is
-  disabled with an explanation and the other models continue to work.
+- **Graceful degradation:** a model whose weights are missing is disabled with an explanation and the other models
+  continue to work.
 
 ---
 
@@ -372,7 +368,7 @@ speaker before formal use.
 | Item | Details |
 |---|---|
 | Formats | PNG, JPG / JPEG, BMP, WebP |
-| Source | Browser upload, or the sample gallery (`data/examples/`, `fig/images/`) |
+| Source | Browser upload, or the sample gallery (`data/examples/`) |
 | Content | One page per run, in any supported language or domain |
 | Resolution | Arbitrary. The models see the page at the *Inference size* (default 1024 px); exports use the original resolution |
 
@@ -426,26 +422,47 @@ The values shown are illustrative.
 
 ### 7.1 Benchmark accuracy of the detectors
 
-The accuracy figures below are **the published figures** for the checkpoints on the IndicDLP
-benchmark (COCO-style mAP averaged over IoU 0.50 to 0.95). They are not re-measured in this project, which
-contributes the inference, fusion and interface layers rather than new training.
+The YOLOv10x and DocLayout-YOLO figures are **the published figures** for those checkpoints on the IndicDLP
+benchmark (COCO-style mAP averaged over IoU 0.50 to 0.95). The YOLO26x figure was **measured in this project** on
+the IndicDLP validation split (3,127 pages, 1024 px), so it is not directly comparable with the published test figures.
 
-| Model | mAP[50:95] |
-|---|---|
-| YOLOv10x | 57.7 |
-| DocLayout-YOLO | 54.5 |
-| RoDLA | 53.1 |
+| Model | mAP[50:95] | Source |
+|---|---|---|
+| YOLOv10x | 57.7 | published |
+| DocLayout-YOLO | 54.5 | published |
+| YOLO26x | 43.4 | measured here (validation split) |
 
 ```mermaid
 xychart-beta
-    title "Reported mAP[50:95] on IndicDLP (higher is better)"
-    x-axis ["YOLOv10x", "DocLayout-YOLO", "RoDLA"]
+    title "mAP[50:95] on IndicDLP (higher is better)"
+    x-axis ["YOLOv10x", "DocLayout-YOLO", "YOLO26x"]
     y-axis "mAP[50:95]" 40 --> 60
-    bar [57.7, 54.5, 53.1]
+    bar [57.7, 54.5, 43.4]
 ```
 
 The ensemble stage has no published benchmark figure. Its effect can be inspected per page through the comparison
 table in the app (regions found, classes found, average confidence, time).
+
+<a id="yolo26-training"></a>
+#### YOLO26 training
+
+YOLO26x is fine-tuned on the 12,345 training pages with `yolo26/train.py` (data from `yolo26/prepare_data.py`,
+scored with `yolo26/evaluate.py`). Settings: COCO-pretrained `yolo26x.pt`, 1024 px, batch 2, 40 epochs, cosine
+learning rate, no flips or rotation, mosaic closed for the last 8 epochs.
+
+| Metric | Value |
+|---|---|
+| mAP[50:95] | 43.4 |
+| mAP50 | 61.2 |
+| Precision | 64.5 |
+| Recall | 59.5 |
+
+YOLO26x is clearly behind YOLOv10x. Likely reasons: YOLOv10x was pretrained on a large synthetic layout corpus
+before fine-tuning, while YOLO26x started from COCO only; about half of the 42 classes have under 1,000 training
+boxes; and a batch of 2 is a weak training recipe. Strongest classes (per-class mAP[50:95]): table 82, paragraph 82,
+figure 74, headline 71, unordered-list 67. Weakest: subsub-headline 3, subsub-section-title 7, answer 13, quote 13,
+sub-unordered-list 16, sub-section-title 18. The trained checkpoint (118 MB) is larger than GitHub's file limit and
+is therefore not in the repository: train it with the commands above.
 
 ### 7.2 Qualitative results
 
@@ -511,9 +528,7 @@ This section is the fastest route to a working demo.
    DocLayout-YOLO are needed; they run on a normal laptop, with or without a GPU.
 3. **Weights.** About 225 MB for the two YOLO models. The app downloads them with one click on first launch.
 4. **Try it.** Choose *Sample gallery*, pick a page, press *Scan & detect*, then switch the *Region names* language.
-5. **RoDLA is optional.** It needs a Linux machine with a compatible NVIDIA GPU and a long build. Without it the app
-   works fully and marks RoDLA as unavailable. Its published results are in [Section 7](#7-experiments-and-results).
-6. **If something fails,** see [Troubleshooting](#step-10-troubleshooting).
+5. **If something fails,** see [Troubleshooting](#step-10-troubleshooting).
 
 ### Quick start (YOLOv10x and DocLayout-YOLO)
 
@@ -527,7 +542,7 @@ pip install -r requirements.txt
 python -m streamlit run app.py        # then open http://localhost:8501 and click "Download weights"
 ```
 
-The detailed steps follow. RoDLA is optional and needs a separate Linux setup, see [Optional: RoDLA](#optional-rodla).
+The detailed steps follow.
 
 ### Step 1: What you need
 
@@ -610,7 +625,7 @@ The weight files live in the `weights/` folder. They are large, so they are **no
 |---|---|---|
 | `md2_PT_indicdlp_FT.pt` | YOLOv10x | 64 MB |
 | `doclayout_yolo_indicdlp.pt` | DocLayout-YOLO | 161 MB |
-| `rodla_internimage_xl_indicdlp.pth` | RoDLA (optional) | 4.1 GB |
+| `yolo26_indicdlp.pt` | YOLO26x (trained with `yolo26/train.py`, see [YOLO26 training](#yolo26-training)) | 118 MB |
 
 **Easiest way:** skip this step. When you start the app (step 7), any missing model shows a
 **⬇ Download weights** button in the sidebar.
@@ -628,19 +643,7 @@ On Windows PowerShell, use `curl.exe` instead of `curl`, and `New-Item -ItemType
 `-C -` resumes an interrupted download. Zenodo can be slow, so be patient. The app ignores partly downloaded files,
 so an unfinished download will not crash it.
 
-The 4.1 GB RoDLA file often drops the connection part-way (`curl: (18)` or `(28)`). Just run the same command again, or
-use this PowerShell loop, which keeps resuming until the file reaches its full size of 4,110,731,465 bytes:
-
-```powershell
-$f = "weights/rodla_internimage_xl_indicdlp.pth"
-while ((-not (Test-Path $f)) -or (Get-Item $f).Length -lt 4110731465) {
-  curl.exe -L -C - -s -S --connect-timeout 30 --speed-time 60 --speed-limit 1000 -o $f "https://zenodo.org/records/15881917/files/rodla_internimage_xl_indicdlp.pth?download=1"
-  Start-Sleep -Seconds 3
-}
-```
-
-All three checkpoints were checked: the two YOLO models load and detect, and the RoDLA checkpoint opens intact
-(1,434 tensors, 342M parameters, 42 classes). RoDLA inference itself needs the Linux setup below.
+All checkpoints were checked and the two YOLOv10-based models load and detect.
 
 ### Step 7: Run the app
 
@@ -691,8 +694,6 @@ To stop the app, press `Ctrl + C` in the terminal.
 | No GPU found | The app falls back to the CPU automatically. The sidebar shows the device in use. |
 | Port 8501 already in use | `python -m streamlit run app.py --server.port 8502` |
 | Indic labels show as empty squares | Your system needs an Indic-capable font (Windows has *Nirmala UI* built in). |
-| RoDLA shows as unavailable, or `No module named 'mmcv'` | Expected on Windows, and on very new GPU generations. See [Optional: RoDLA](#optional-rodla) for the Linux setup. |
-| `ModuleNotFoundError` for `ultralytics` or `streamlit` inside the RoDLA environment | Run `pip install streamlit ensemble-boxes pillow numpy opencv-python` there (step 4 of the RoDLA setup). |
 
 ### Setup summary for each model
 
@@ -700,70 +701,9 @@ To stop the app, press `Ctrl + C` in the terminal.
 |---|---|---|---|
 | YOLOv10x | `ultralytics` + PyTorch | Windows, Linux, macOS; GPU or CPU | Steps 4 to 6 (weights: `md2_PT_indicdlp_FT.pt`) |
 | DocLayout-YOLO | `doclayout-yolo` + PyTorch | Windows, Linux, macOS; GPU or CPU | Steps 4 to 6 (weights: `doclayout_yolo_indicdlp.pt`) |
-| RoDLA (optional) | Python 3.8, PyTorch 2.0.1 + CUDA 11.8, `mmcv-full==1.6.0`, `mmdet==2.28.1`, compiled DCNv3 ops | Linux or WSL2 with an NVIDIA GPU | [Optional: RoDLA](#optional-rodla) |
+| YOLO26 | `ultralytics>=8.4` + PyTorch | Windows, Linux, macOS; GPU or CPU | Train with `yolo26/train.py` (weights: `yolo26_indicdlp.pt`) |
 
-YOLOv10x and DocLayout-YOLO share one environment (steps 3 to 5). RoDLA needs its **own, separate** environment because
-its pinned versions conflict with the modern PyTorch used above. The app is run from whichever environment has the
-packages for the models you want.
-
-### Optional: RoDLA
-
-**Why it is optional.** RoDLA is built on old, pinned code (`mmcv-full==1.6.0`, `mmdet==2.28.1`, PyTorch 2.0.1) and on
-InternImage's DCNv3 CUDA operators, which must be compiled on your machine. None of this installs on a recent Python
-(3.14 has no builds), and it is hard to compile on Windows. If `mmcv` / `mmdet` are missing, the app shows RoDLA as
-unavailable and the other models keep working. If the log says `No module named 'mmcv'`, this is the cause.
-
-**GPU compatibility.** PyTorch 2.0.1 with CUDA 11.8 only supports NVIDIA GPU generations up to Ada (compute capability
-8.9). Newer generations need a newer PyTorch, which this RoDLA code does not support. Use an older supported GPU or a
-cloud GPU (Colab, Kaggle, a cloud VM) for RoDLA. YOLOv10x and DocLayout-YOLO have no such limit.
-
-**Requirements.** Linux (or WSL2 on Windows with an NVIDIA driver), an NVIDIA GPU of the supported kind above, the CUDA 11.8
-toolkit (`nvcc`) for compiling, `gcc`/`g++`, and about 10 GB of free disk space.
-
-**Setup steps** (run from the project folder):
-
-```bash
-# 1. Separate environment with the pinned versions
-conda env create -f rodla.yml
-conda activate rodla
-
-# 2. MMCV / MMDetection stack and RoDLA's extra packages
-pip install -U openmim
-mim install mmcv-full==1.6.0
-pip install mmdet==2.28.1
-pip install -r RoDLA/requirements.txt
-
-# 3. Compile the DCNv3 CUDA operators (needs nvcc and a visible GPU)
-cd RoDLA/model/ops_dcnv3
-sh ./make.sh
-cd ../../..
-
-# 4. App dependencies (Streamlit etc.), without reinstalling PyTorch
-pip install streamlit ensemble-boxes pillow numpy opencv-python
-
-# 5. RoDLA checkpoint (4.1 GB, resumable)
-mkdir -p weights
-curl -L -C - -o weights/rodla_internimage_xl_indicdlp.pth \
-  "https://zenodo.org/records/15881917/files/rodla_internimage_xl_indicdlp.pth?download=1"
-
-# 6. Run the app
-python -m streamlit run app.py
-```
-
-Other upstream packages (`ocrodeg`, `detectron2`) are described in the
-[RoDLA repository](https://github.com/yufanchen96/RoDLA); install them if an import error names them.
-If `pip` of the conda environment pulls in an incompatible `numpy` or `opencv-python`, pin `numpy<2`.
-
-**Check it worked.** The sidebar shows the RoDLA toggle enabled, and this prints no error:
-
-```bash
-python -c "import mmcv, mmdet; print(mmcv.__version__, mmdet.__version__)"
-```
-
-Expected output: `1.6.0 2.28.1`.
-
-**CPU only.** Not supported out of the box. The DCNv3 operators need CUDA, and an InternImage-XL model is far too slow
-on a CPU to be practical.
+All models share one environment (steps 3 to 5).
 
 ---
 
@@ -775,12 +715,10 @@ on a CPU to be practical.
   approximated.
 - **Heuristic reading order.** The ordering sorts by position in bands. It can mis-order complex layouts such as
   multi-column pages with spanning headlines or wrapped figures.
-- **No new training or benchmark.** Accuracy figures are the published ones for the IndicDLP checkpoints. The
+- **Limited training.** YOLOv10x and DocLayout-YOLO use the published checkpoints; only YOLO26x was trained here, and it is the weakest of the three. The
   contribution of multi-scale and ensemble fusion has not been benchmarked on the full test set.
 - **Hierarchical classes.** Distinguishing headline levels, list levels and question levels depends on subtle size
   cues and gives the lowest confidences in the qualitative examples.
-- **RoDLA availability.** RoDLA requires Linux, Python 3.8, CUDA and compiled operators, so it is unavailable in a
-  plain Windows setup.
 - **Translations.** The 12-language labels are for display and need native-speaker review before formal use.
 - **One page at a time.** There is no multi-page PDF handling.
 
@@ -803,9 +741,8 @@ on a CPU to be practical.
 | `requirements.txt` | Python dependencies for the app |
 | `assets/` | The sample input and output images used in this README |
 | `weights/` | Model checkpoints (downloaded separately, not in git) |
-| `data/examples/`, `fig/images/` | Sample pages for the gallery |
-| `RoDLA/`, `doclayout-yolo/` | Model code needed to run RoDLA and DocLayout-YOLO |
-| `rodla.yml` | Conda environment for the optional RoDLA setup |
+| `data/examples/` | Sample pages for the gallery |
+| `yolo26/` | Scripts to prepare the data, train and evaluate YOLO26 |
 
 ---
 
@@ -814,7 +751,7 @@ on a CPU to be practical.
 ### 11.1 Libraries
 
 [Ultralytics YOLOv10](https://github.com/ultralytics/ultralytics),
-[DocLayout-YOLO](https://github.com/opendatalab/DocLayout-YOLO), [RoDLA](https://github.com/yufanchen96/RoDLA),
+[DocLayout-YOLO](https://github.com/opendatalab/DocLayout-YOLO),
 [ensemble-boxes](https://github.com/ZFTurbo/Weighted-Boxes-Fusion), [Streamlit](https://streamlit.io) and PyTorch.
 
 ### 11.2 References
@@ -822,7 +759,5 @@ on a CPU to be practical.
 1. A. Wang, H. Chen, L. Liu, et al. *YOLOv10: Real-Time End-to-End Object Detection.* NeurIPS 2024.
 2. Z. Zhao, H. Kang, B. Wang, C. He. *DocLayout-YOLO: Enhancing Document Layout Analysis through Diverse Synthetic
    Data and Global-to-Local Adaptive Perception.* arXiv:2410.12628, 2024.
-3. Y. Chen, J. Zhang, K. Peng, et al. *RoDLA: Benchmarking the Robustness of Document Layout Analysis Models.*
-   CVPR 2024.
-4. R. Solovyev, W. Wang, T. Gabruseva. *Weighted Boxes Fusion: Ensembling boxes from different object detection
+3. R. Solovyev, W. Wang, T. Gabruseva. *Weighted Boxes Fusion: Ensembling boxes from different object detection
    models.* Image and Vision Computing, 2021.

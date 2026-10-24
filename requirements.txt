@@ -1,8 +1,8 @@
-﻿# IndicDLP Live Layout Studio (app.py)
+# IndicDLP Live Layout Studio (app.py)
 # Python 3.10 or newer. CPU-only machines work too, just slower.
 
 streamlit>=1.57          # tested with 1.64.0
-ultralytics>=8.3         # YOLOv10x weights (tested with 8.4.178)
+ultralytics>=8.4         # YOLOv10x and YOLO26 weights (YOLO26 needs 8.4.0+, tested with 8.4.178)
 doclayout-yolo>=0.0.4    # DocLayout-YOLO weights
 ensemble-boxes>=1.0.9    # box fusion for the multi-scale boost and Ensemble Fusion
 huggingface_hub          # imported by doclayout-yolo
@@ -14,7 +14,6 @@ opencv-python
 #   NVIDIA GPU (CUDA 12.8):  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 #   CPU only:                pip install torch torchvision
 
-# Optional, only for RoDLA (Linux, Python 3.8, CUDA): see rodla.yml and the main README.md
-#   mmcv-full==1.6.0
-#   mmdet==2.28.1
-
+# Only needed to rebuild the YOLO26 training data (yolo26/prepare_data.py):
+pyarrow
+pyyaml

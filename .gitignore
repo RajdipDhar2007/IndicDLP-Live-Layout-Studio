@@ -5,17 +5,10 @@ model/ocrodeg
 .venv/
 __pycache__/
 *.pyc
+runs/
 weights/
+/yolo26*.pt
 *.part
-rodla.done
-
-# Compiled CUDA build artifacts (rebuild with RoDLA/model/ops_dcnv3/make.sh)
-RoDLA/model/ops_dcnv3/build/
-RoDLA/model/ops_dcnv3/dist/
-*.egg-info/
-*.so
-*.o
-*.whl
 
 # Claude Code local settings
 .claude/settings.local.json

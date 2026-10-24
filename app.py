@@ -12,7 +12,6 @@ import base64
 import collections
 import io
 import json
-import sys
 import time
 import urllib.request
 from dataclasses import dataclass
@@ -27,7 +26,6 @@ from i18n import LANGS, label as tr
 ROOT = Path(__file__).resolve().parent
 WEIGHTS = ROOT / "weights"
 EXAMPLE_DIRS = [ROOT / "data" / "examples", ROOT / "fig" / "images"]
-RODLA_DIR = ROOT / "RoDLA" / "model"
 ZENODO = "https://zenodo.org/records/15881917/files/{}?download=1"
 DEFAULTS = dict(conf=0.25, iou=0.70, imgsz=1024, speed="Normal", boost=True, fuse=True, lang="en")
 
@@ -43,7 +41,7 @@ class ModelSpec:
     title: str
     blurb: str
     file: str
-    kind: str  # "yolo" | "doclayout" | "rodla" | "fusion"
+    kind: str  # "yolo" | "doclayout" | "fusion"
     map: str
     icon: str
     size: int  # expected file size in bytes, used to reject partial downloads
@@ -54,8 +52,8 @@ MODELS = {
                           "md2_PT_indicdlp_FT.pt", "yolo", "57.7", "⚡", 64280114),
     "doclayout": ModelSpec("doclayout", "DocLayout-YOLO", "Document-specialised YOLOv10 variant with global-to-local perception.",
                            "doclayout_yolo_indicdlp.pt", "doclayout", "54.5", "🧭", 161475350),
-    "rodla": ModelSpec("rodla", "RoDLA", "Robust InternImage-XL + DINO detector built for degraded documents.",
-                       "rodla_internimage_xl_indicdlp.pth", "rodla", "53.1", "🛡️", 4110731465),
+    "yolo26": ModelSpec("yolo26", "YOLO26", "Latest Ultralytics YOLO (extra-large size), NMS-free, fine-tuned on IndicDLP's 42 layout classes (train it with yolo26/train.py).",
+                        "yolo26_indicdlp.pt", "yolo", "43.4", "🚀", 1),
 }
 FUSION = ModelSpec("fusion", "Ensemble Fusion", "All models voting together: boxes from every model merged with weighted box fusion.",
                    "", "fusion", "-", "🧬", 0)
@@ -119,21 +117,7 @@ def device_name() -> str:
         return "cpu"
 
 
-def rodla_available() -> tuple[bool, str]:
-    try:
-        import mmcv  # noqa: F401
-        import mmdet  # noqa: F401
-    except Exception:
-        return False, ("RoDLA needs `mmcv-full==1.6.0`, `mmdet==2.28.1` and compiled DCNv3 CUDA ops "
-                       "(Python 3.8 + Linux/CUDA, see `rodla.yml`). They are not installed here, so this model is skipped.")
-    if not (WEIGHTS / MODELS["rodla"].file).exists():
-        return False, "RoDLA checkpoint (≈4 GB) is not in `weights/` yet."
-    return True, ""
-
-
 def model_status(spec: ModelSpec) -> tuple[bool, str]:
-    if spec.kind == "rodla":
-        return rodla_available()
     path = WEIGHTS / spec.file
     if not path.exists():
         return False, "Weights not downloaded."
@@ -152,38 +136,19 @@ def load_model(key: str, device: str):
     if spec.kind == "yolo":
         from ultralytics import YOLO
         return YOLO(path)
-    if spec.kind == "doclayout":
-        from doclayout_yolo import YOLOv10
-        return YOLOv10(path)
-    sys.path.insert(0, str(RODLA_DIR))
-    import mmcv_custom  # noqa: F401
-    import mmdet_custom  # noqa: F401
-    from mmdet.apis import init_detector
-    return init_detector(str(RODLA_DIR / "configs/indic/rodla_internimage_xl_indic.py"), path, device=device)
+    from doclayout_yolo import YOLOv10
+    return YOLOv10(path)
 
 
 def predict_once(key: str, image: Image.Image, conf: float, iou: float, imgsz: int, device: str) -> list[dict]:
+    import numpy as np
     model = load_model(key, device)
-    spec = MODELS[key]
-    dets: list[dict] = []
-    if spec.kind in ("yolo", "doclayout"):
-        import numpy as np
-        bgr = np.ascontiguousarray(np.array(image.convert("RGB"))[:, :, ::-1])  # ultralytics expects BGR arrays
-        res = list(model.predict(bgr, imgsz=imgsz, conf=conf, iou=iou,
-                                 device=0 if device.startswith("cuda") else "cpu", verbose=False))[0]
-        names = res.names
-        for (x1, y1, x2, y2), c, k in zip(res.boxes.xyxy.tolist(), res.boxes.conf.tolist(), res.boxes.cls.tolist()):
-            dets.append(dict(box=(x1, y1, x2, y2), conf=float(c), cls=int(k), label=names[int(k)]))
-    else:
-        import numpy as np
-        from mmdet.apis import inference_detector
-        out = inference_detector(model, np.array(image.convert("RGB"))[:, :, ::-1])
-        bbox_res = out[0] if isinstance(out, tuple) else out
-        for k, arr in enumerate(bbox_res):
-            for x1, y1, x2, y2, c in arr:
-                if c >= conf:
-                    dets.append(dict(box=(x1, y1, x2, y2), conf=float(c), cls=k, label=model.CLASSES[k]))
-    return dets
+    bgr = np.ascontiguousarray(np.array(image.convert("RGB"))[:, :, ::-1])  # ultralytics expects BGR arrays
+    res = list(model.predict(bgr, imgsz=imgsz, conf=conf, iou=iou,
+                             device=0 if device.startswith("cuda") else "cpu", verbose=False))[0]
+    names = res.names
+    return [dict(box=(x1, y1, x2, y2), conf=float(c), cls=int(k), label=names[int(k)])
+            for (x1, y1, x2, y2), c, k in zip(res.boxes.xyxy.tolist(), res.boxes.conf.tolist(), res.boxes.cls.tolist())]
 
 
 def fuse(det_lists: list[list[dict]], size: tuple[int, int], conf: float, iou_thr: float = 0.55) -> list[dict]:
@@ -210,7 +175,7 @@ def reading_order(dets: list[dict]) -> list[dict]:
 def run_model(key: str, image: Image.Image, cfg: dict, device: str) -> tuple[list[dict], float]:
     t0 = time.perf_counter()
     scales = [cfg["imgsz"]]
-    if cfg["boost"] and MODELS[key].kind != "rodla":
+    if cfg["boost"]:
         scales.append(1280 if cfg["imgsz"] < 1280 else 1024)  # a second scale recovers small / faint regions
     passes = [predict_once(key, image, cfg["conf"], cfg["iou"], s, device) for s in scales]
     dets = fuse(passes, image.size, cfg["conf"], 0.6) if len(passes) > 1 else passes[0]
@@ -465,17 +430,17 @@ def sidebar() -> dict:
         chosen: list[str] = []
         for key, spec in MODELS.items():
             ok, why = model_status(spec)
-            label = f"{spec.icon} {spec.title}  ·  mAP {spec.map}"
-            on = st.toggle(label, value=ok, key=f"use_{key}", disabled=not ok and spec.kind == "rodla", help=why or spec.blurb)
+            label = f"{spec.icon} {spec.title}" + (f"  ·  mAP {spec.map}" if spec.map != "-" else "")
+            on = st.toggle(label, value=ok, key=f"use_{key}", help=why or spec.blurb)
             if on and ok:
                 chosen.append(key)
-            if not ok and spec.kind != "rodla":
+            if not ok and key == "yolo26":
+                st.caption(f"⚠️ {why} Train it with `yolo26/train.py`.")
+            elif not ok:
                 if st.button(f"⬇ Download {spec.title} weights", key=f"dl_{key}"):
                     download_weights(spec)
                     st.session_state["_enable_after_download"] = key  # applied before the toggle is drawn on the rerun
                     st.rerun()
-            if not ok and spec.kind == "rodla":
-                st.caption(f"⚠️ {why}")
         st.divider()
         st.markdown("##### 🌐 Region names")
         st.selectbox("Language", list(LANGS), format_func=lambda k: LANGS[k], key="lang",
@@ -627,7 +592,7 @@ def main() -> None:
         st.session_state.setdefault(k, v)
     st.html(CSS)
     st.html('<div class="hero"><h1>IndicDLP Live Layout Studio</h1>'
-            '<p>Drop in a document page and watch YOLOv10x, DocLayout-YOLO and RoDLA read its layout, region by region, in 12 languages.</p></div>')
+            '<p>Drop in a document page and watch YOLOv10x, DocLayout-YOLO and YOLO26x read its layout, region by region, in 12 languages.</p></div>')
     cfg = sidebar()
     lang = st.session_state["lang"]
 
