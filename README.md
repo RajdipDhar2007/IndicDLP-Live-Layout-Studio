@@ -97,6 +97,65 @@ discards overlapping boxes, WBF clusters overlapping boxes of the same class and
 weighted by confidence*, which usually gives better localisation. It is used here both for multi-scale and for
 multi-model fusion.
 
+### 2.1 How the detectors find and draw boxes
+
+All three models are **single-stage object detectors**: one forward pass over the page produces every box and its
+class, with no separate region-proposal step. The description below is the general YOLO-family design; the exact
+layers differ between YOLOv10x, DocLayout-YOLO and YOLO26x.
+
+```mermaid
+flowchart LR
+    IMG["Page image<br/>resized to 1024 px"] --> BB["Backbone<br/>convolutions"]
+    BB --> NK["Neck<br/>mixes 3 scales"]
+    NK --> H["Head<br/>box + 42 class scores<br/>at every grid cell"]
+    H --> SEL["Keep best prediction<br/>per object"]
+    SEL --> TH["Confidence threshold"]
+    TH --> OUT["Boxes: x1, y1, x2, y2,<br/>class, score"]
+```
+
+**Detection, step by step**
+
+1. **Resize.** The page is scaled to the inference size (1024 px by default) and normalised.
+2. **Backbone.** A stack of convolution layers turns the image into feature maps at three resolutions, one cell per
+   8, 16 and 32 input pixels (the "strides" of the network). The fine map keeps the detail needed for small regions
+   such as folios and page numbers; the coarse map sees large regions such as tables and whole columns.
+3. **Neck.** The three maps are combined: coarse maps are upsampled and merged with finer ones (and the reverse), so
+   every scale has both detail and context.
+4. **Head.** At every cell of every map the head predicts, in the same pass, the box (its four edges, measured
+   from the cell) and a score for each of the 42 classes. A page therefore produces thousands of candidate boxes.
+5. **Choosing the final boxes.** Classic YOLO keeps the best candidate by *non-maximum suppression* (NMS): the
+   highest-scoring box is kept and any box overlapping it by more than the IoU threshold is removed. YOLOv10 and
+   YOLO26 are trained to give **one prediction per object**, so this step is not needed at inference
+   ("NMS-free"). Finally, boxes whose best class score is below the **confidence threshold** are dropped.
+6. **Output.** Each remaining box is a rectangle `(x1, y1, x2, y2)`, a class (one of the 42) and a score. These are
+   the records the app shows and exports.
+
+**Training, step by step**
+
+1. **Ground truth.** Every training page has human-drawn rectangles with a class id. `yolo26/prepare_data.py`
+   converts them to the YOLO format: class, centre and size, all relative to the page.
+2. **Matching.** Each ground-truth box has to be assigned to the candidate predictions that should learn it.
+   Ultralytics uses a *task-aligned assigner*: candidates whose cell lies inside the box and whose predicted box
+   overlaps it well and whose class score is high get the box as their target; all other candidates are trained to
+   predict "background". YOLOv10 and YOLO26 additionally train a second, one-to-one head so that only the single
+   best candidate per object survives at inference, which is what removes NMS.
+3. **Loss.** The error to minimise combines a **box loss** (how much the predicted box overlaps the ground truth,
+   an IoU-based measure, plus a small direct coordinate term in YOLO26) and a **classification loss** (the
+   predicted 42 scores against the true class). YOLOv10x also uses a distribution-based box term; YOLO26 predicts the
+   box edges directly instead.
+4. **Optimisation.** Pages are fed in batches with augmentation (mosaic of four pages, random scale, colour
+   jitter; flips and rotation are switched off here because text must not be mirrored). Gradient descent updates all
+   weights, the learning rate follows a cosine decay, and after every epoch the model is scored on the validation
+   pages (mAP). The checkpoint with the best score is kept.
+5. **Fine-tuning.** The models start from pretrained weights instead of random ones. YOLOv10x was pretrained on a
+   large synthetic layout corpus, and YOLO26x on COCO photographs; both are then trained on the IndicDLP pages so
+   the final layer outputs the 42 layout classes.
+
+**What is specific to document layout.** Regions are large, rectangular, tightly packed and strongly tied to their
+position on the page, and some classes differ only by size or level (headline vs sub-headline). That is why
+resolution matters (small page furniture), why headline and list levels get the lowest scores, and why
+DocLayout-YOLO adds a module that looks at both page-level structure and small regions.
+
 ---
 
 ## 3. Dataset and label schema
