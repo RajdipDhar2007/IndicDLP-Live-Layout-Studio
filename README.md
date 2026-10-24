@@ -462,7 +462,18 @@ before fine-tuning, while YOLO26x started from COCO only; about half of the 42 c
 boxes; and a batch of 2 is a weak training recipe. Strongest classes (per-class mAP[50:95]): table 82, paragraph 82,
 figure 74, headline 71, unordered-list 67. Weakest: subsub-headline 3, subsub-section-title 7, answer 13, quote 13,
 sub-unordered-list 16, sub-section-title 18. The trained checkpoint (118 MB) is larger than GitHub's file limit and
-is therefore not in the repository: train it with the commands above.
+is therefore not in the repository. To get it, build the dataset and train (the dataset is
+[`ai4bharat/indicdlp`](https://huggingface.co/datasets/ai4bharat/indicdlp) on Hugging Face; the training run takes
+about 20 hours), or use the app with the other two models, which work without it:
+
+```bash
+python yolo26/prepare_data.py --raw <folder-with-parquet-shards> --out <dataset-folder>
+python yolo26/train.py --data <dataset-folder>/indicdlp.yaml --model yolo26x.pt --epochs 40 --batch 2 --close-mosaic 8
+python yolo26/evaluate.py --data <dataset-folder>/indicdlp.yaml
+```
+
+`train.py` copies the best checkpoint to `weights/yolo26_indicdlp.pt`, the file the app loads. Without it the app
+shows YOLO26x as unavailable and the other models keep working.
 
 ### 7.2 Qualitative results
 
