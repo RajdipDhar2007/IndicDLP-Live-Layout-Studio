@@ -17,8 +17,8 @@ multi-column and mixed-script, and a large share of archival material is degrade
 and its fine-tuned detectors address this with 119,806 annotated pages and a
 42-class label schema, but the models are released as research checkpoints with no end-user interface.
 
-*New to the topic? Read [Start here](#start-here-the-project-explained-from-scratch) first: it explains in plain
-language what the models do, how they are trained, how they draw the boxes and which data they used.*
+*The [Overview](#overview-how-the-system-works) explains in plain language what the models do, how they are trained,
+how they draw the boxes and which data they used.*
 
 This work presents **IndicDLP Live Layout Studio**, a web application that makes those detectors usable and
 inspectable. It (i) runs three state-of-the-art detectors (YOLOv10x, DocLayout-YOLO and YOLO26) behind one unified
@@ -33,10 +33,10 @@ weighted boxes fusion, English and Bengali user interface, Streamlit.
 
 ---
 
-## Start here: the project explained from scratch
+## Overview: how the system works
 
-You do not need any background in computer vision or machine learning to read this part. Everything later in the
-document goes into more detail, but this section is meant to be enough on its own.
+This overview is written to be understood without any background in computer vision or machine learning. The later
+sections go into more detail.
 
 ### What problem does it solve?
 
@@ -46,8 +46,8 @@ finding those blocks and naming them. The result is a list of **boxes**: each bo
 label such as `headline`, `paragraph`, `figure` or `table`. This is usually the first step before reading the text,
 searching a library of scanned pages, or making pages accessible.
 
-This project is a web app. You upload a page (English or Bengali), the app finds the boxes, draws them on your page
-one by one so you can watch, and shows the label of each box in English or Bengali.
+This project is a web app. A page (English or Bengali) is uploaded, the app finds the boxes, draws them on the page
+one by one so the process can be watched, and shows the label of each box in English or Bengali.
 
 ### What is the "model"?
 
@@ -58,7 +58,7 @@ picture into boxes and labels. Finding the right numbers is called **training**.
 
 ### How does the model learn? (training)
 
-Think of teaching a child to spot headlines by showing thousands of marked-up pages.
+Training works like teaching a child to spot headlines by showing thousands of marked-up pages.
 
 1. **Examples with answers.** We have many pages where people have already drawn the correct boxes and chosen the
    correct label for each one. These are the *training pages*. The human-drawn boxes are the **ground truth**.
@@ -85,7 +85,7 @@ Two things make training easier than starting from nothing:
 
 ### How does the model draw the boxes? (detection)
 
-When you upload a page, the model works in one pass, in these steps:
+On an uploaded page, the model works in one pass, in these steps:
 
 1. **Resize.** The page is scaled to a fixed size (1024 pixels on the long side by default).
 2. **Look at the picture in layers.** The first layers of the network pick out simple things such as edges and strokes.
@@ -103,7 +103,7 @@ When you upload a page, the model works in one pass, in these steps:
 5. **Keep the confident ones.** Each remaining box has a **confidence** from 0 to 1. Boxes below the confidence
    threshold (0.25 in the app) are thrown away.
 6. **Output.** What is left is the final answer: for each region, the rectangle `(x1, y1, x2, y2)` in pixels, its
-   label, and its confidence. The app draws these on your page and can export them as an image and a JSON file.
+   label, and its confidence. The app draws these on the page and can export them as an image and a JSON file.
 
 The three models are all members of the **YOLO** family ("You Only Look Once"), named for the fact that they find all
 boxes in one look at the page instead of searching region by region.
@@ -145,7 +145,7 @@ training set, plus the pretraining difference, is the main reason YOLO26x scores
 
 ### What does the app add on top of the models?
 
-- **Three models in one place**, which you can switch on and off and compare.
+- **Three models in one place**, which can be switched on and off and compared.
 - **Multi-scale boost.** The same page is run through a model at two sizes and the two answers are merged, which
   finds small or faint regions more often.
 - **Ensemble fusion.** The answers of several models are merged into one, using a method called Weighted Boxes Fusion
@@ -172,7 +172,7 @@ training set, plus the pretraining difference, is the main reason YOLO26x scores
 
 ## Contents
 
-0. [Start here: the project explained from scratch](#start-here-the-project-explained-from-scratch)
+0. [Overview: how the system works](#overview-how-the-system-works)
 1. [Introduction](#1-introduction)
 2. [Background and related work](#2-background-and-related-work)
 3. [Dataset and label schema](#3-dataset-and-label-schema)
@@ -239,7 +239,7 @@ multi-model fusion.
 
 ### 2.1 How the detectors find and draw boxes
 
-A beginner-friendly version of this subsection is in [Start here](#start-here-the-project-explained-from-scratch).
+A beginner-friendly version of this subsection is in the [Overview](#overview-how-the-system-works).
 The version below is more technical.
 
 All three models are **single-stage object detectors**: one forward pass over the page produces every box and its
@@ -728,7 +728,7 @@ python -m streamlit run app.py        # then open http://localhost:8501 and clic
 
 The detailed steps follow.
 
-### Step 1: What you need
+### Step 1: Requirements
 
 - **Git** ([download](https://git-scm.com/downloads))
 - **Python 3.10 or newer** ([download](https://www.python.org/downloads/)), tested on 3.14.
@@ -758,7 +758,7 @@ All the following commands are run **from inside this project folder**.
 
 ### Step 3: Create a virtual environment
 
-A virtual environment keeps this project's packages separate from the rest of your system.
+A virtual environment keeps this project's packages separate from the rest of the system.
 
 **Windows (PowerShell):**
 
@@ -777,11 +777,11 @@ python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-You should now see `(.venv)` at the start of your terminal prompt. Do the remaining steps in this same terminal.
+The terminal prompt now starts with `(.venv)`. The remaining steps are done in this same terminal.
 
 ### Step 4: Install PyTorch
 
-Install PyTorch **first**, because the right build depends on your hardware. Pick **one** line:
+Install PyTorch **first**, because the right build depends on the hardware. **One** line is chosen:
 
 ```bash
 # NVIDIA GPU (CUDA 12.8)
@@ -811,7 +811,7 @@ The weight files live in the `weights/` folder. They are large, so they are **no
 | `doclayout_yolo_indicdlp.pt` | DocLayout-YOLO | 161 MB |
 | `yolo26_indicdlp.pt` | YOLO26x (trained with `yolo26/train.py`, see [YOLO26 training](#yolo26-training)) | 118 MB |
 
-**Easiest way:** skip this step. When you start the app (step 7), any missing model shows a
+**Easiest way:** skip this step. When the app starts (step 7), any missing model shows a
 **⬇ Download weights** button in the sidebar.
 
 **Manual download:**
@@ -835,7 +835,7 @@ All checkpoints were checked and the two YOLOv10-based models load and detect.
 python -m streamlit run app.py
 ```
 
-The app opens at **http://localhost:8501**. If your browser does not open by itself, paste that address into it.
+The app opens at **http://localhost:8501**. If the browser does not open by itself, the address can be pasted into it.
 To stop the app, press `Ctrl + C` in the terminal.
 
 **To start it again later:** open a terminal in the project folder, activate the environment again
@@ -877,7 +877,7 @@ To stop the app, press `Ctrl + C` in the terminal.
 | Scans are slow | Turn off *Multi-scale boost*, or switch off one model. |
 | No GPU found | The app falls back to the CPU automatically. The sidebar shows the device in use. |
 | Port 8501 already in use | `python -m streamlit run app.py --server.port 8502` |
-| Bengali labels show as empty squares | Your system needs a Bengali-capable font (Windows has *Nirmala UI* built in). |
+| Bengali labels show as empty squares | The system needs a Bengali-capable font (Windows has *Nirmala UI* built in). |
 
 ### Setup summary for each model
 
