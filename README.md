@@ -2,7 +2,7 @@
 
 # IndicDLP Live Layout Studio
 
-### An interactive, multilingual system for document layout parsing of Indic and English pages, with multi-scale inference and ensemble fusion of deep detectors
+### An interactive, multilingual system for document layout parsing of English and Bengali pages, with multi-scale inference and ensemble fusion of deep detectors
 
 </div>
 
@@ -12,7 +12,7 @@
 
 Document layout parsing, the task of locating and classifying the structural regions of a page (headlines,
 paragraphs, figures, tables, page furniture and so on), is the first step of almost every document digitisation
-pipeline. For Indian-language documents the task is difficult: scripts are visually complex, pages are often
+pipeline. For Indian-language documents, here English and Bengali, the task is difficult: scripts are visually complex, pages are often
 multi-column and mixed-script, and a large share of archival material is degraded. The recent **IndicDLP** dataset
 and its fine-tuned detectors address this with 119,806 annotated pages in 11 Indic languages and English and a
 42-class label schema, but the models are released as research checkpoints with no end-user interface.
@@ -22,11 +22,11 @@ inspectable. It (i) runs three state-of-the-art detectors (YOLOv10x, DocLayout-Y
 interface; (ii) adds a **multi-scale inference** stage and an **ensemble fusion** stage based on Weighted Boxes
 Fusion, which combine the outputs of several passes or several models into a single, more complete prediction;
 (iii) animates the detection process in real time so that the behaviour of each model can be observed region by
-region; and (iv) renders the 42 region classes in **12 languages**, with colour-coded, exportable results (annotated
+region; and (iv) renders the 42 region classes in **English and Bengali**, with colour-coded, exportable results (annotated
 PNG and structured JSON).
 
 **Keywords:** document layout analysis, Indic scripts, object detection, YOLOv10, DocLayout-YOLO, YOLO26,
-weighted boxes fusion, multilingual user interface, Streamlit.
+weighted boxes fusion, English and Bengali user interface, Streamlit.
 
 ---
 
@@ -73,7 +73,7 @@ and figure extraction, accessibility tagging, search indexing) depend.
 3. An **ensemble fusion** stage that merges the predictions of all models with Weighted Boxes Fusion.
 4. A **live, animated reveal** of detections with a feed, counters and timing, intended for demonstration and for
    building intuition about model behaviour.
-5. **Localised region names** for all 42 classes in English and 11 Indic languages, switchable without re-running
+5. **Localised region names** for all 42 classes in English and Bengali, switchable without re-running
    inference.
 6. **Export** of results as full-resolution annotated images and structured JSON, plus a per-model comparison table
    and per-class statistics.
@@ -101,7 +101,9 @@ multi-model fusion.
 
 ## 3. Dataset and label schema
 
-The models were trained on **IndicDLP** (statistics below are as published for the dataset):
+The models were trained on **IndicDLP** (statistics below are as published for the whole dataset). This project is
+scoped to **English and Bengali**: the app's interface and region names are provided in those two languages only,
+although the detectors themselves were trained on all of the languages listed.
 
 | Property | Value |
 |---|---|
@@ -195,12 +197,12 @@ flowchart TB
     end
 
     subgraph OUT["Output layer"]
-        O1["Interactive annotated page<br/>12-language labels"]
+        O1["Interactive annotated page<br/>English and Bengali labels"]
         O2["Annotated PNG"]
         O3["Detections JSON"]
     end
 
-    I18["i18n.py<br/>42 classes x 12 languages"]
+    I18["i18n.py<br/>42 classes x 2 languages"]
 
     U1 --> P
     U2 --> R
@@ -229,7 +231,7 @@ flowchart TB
 | Model registry | `app.py` (`MODELS`) | Names, checkpoint files, expected sizes, availability checks |
 | Inference engine | `app.py` (`predict_once`, `run_model`) | Runs a model and converts its output to one common format |
 | Fusion | `app.py` (`fuse`) | Weighted Boxes Fusion for scales and for models |
-| Localisation | `i18n.py` | Names of all 42 classes in 12 languages |
+| Localisation | `i18n.py` | Names of all 42 classes in English and Bengali |
 | Model code | `ultralytics`, `doclayout-yolo` (pip packages) | Upstream implementations required by those checkpoints |
 
 ### 4.3 Interaction sequence
@@ -341,7 +343,7 @@ output. It is a lightweight heuristic and is not a full reading-order model (see
 
 ### 5.7 Localisation
 
-Class names are stored once in English (the labels the models emit) and mapped to the other 11 languages by
+Class names are stored once in English (the labels the models emit) and mapped to Bengali by
 `i18n.py` at display time. Since only the display string changes, switching language never triggers inference.
 The translations are concise conventional layout terms intended for display and should be reviewed by a native
 speaker before formal use.
@@ -410,7 +412,7 @@ The values shown are illustrative.
 | Confidence threshold | Minimum score kept | 0.05 to 0.95, step 0.05 | 0.25 |
 | NMS IoU | Duplicate-removal overlap threshold | 0.10 to 0.95, step 0.05 | 0.70 |
 | Inference size | Input resolution in pixels | 640, 800, 1024, 1280 | 1024 |
-| Region-name language | One of 12 | English and 11 Indic languages | English |
+| Region-name language | Language of the class names | English, Bengali | English |
 | Reveal speed | Animation pace only, no effect on results | Cinematic, Normal, Fast, Instant | Normal |
 
 The reveal speed sets how long the box-by-box animation takes for a page: about 6 s (Cinematic), 3 s (Normal),
@@ -424,7 +426,7 @@ every value above.
 | Confidence threshold | Minimum score kept | 0.25 |
 | NMS IoU | Duplicate-removal overlap threshold | 0.70 |
 | Inference size | Input resolution (640, 800, 1024, 1280) | 1024 |
-| Region-name language | One of 12 | English |
+| Region-name language | English or Bengali | English |
 | Reveal speed | Animation pace only | Normal |
 
 ---
@@ -502,7 +504,7 @@ address, and the app lets the user observe it directly by toggling them and comp
 This section is the fastest route to a working demo.
 
 1. **What to expect.** A web app that detects layout regions on a document page with up to three models, fuses
-   their outputs, and shows labels in 12 languages. It runs in a browser at `http://localhost:8501`.
+   their outputs, and shows labels in English and Bengali. It runs in a browser at `http://localhost:8501`.
 2. **Minimum setup (about 10 minutes plus downloads).** Follow the Quick start below. Only YOLOv10x and
    DocLayout-YOLO are needed; they run on a normal laptop, with or without a GPU.
 3. **Weights.** About 225 MB for the two YOLO models. The app downloads them with one click on first launch.
@@ -643,7 +645,7 @@ To stop the app, press `Ctrl + C` in the terminal.
 3. Watch the scan, then each model's regions appear one by one with a live feed, stats and a progress bar.
 4. Scroll to **Results** for the comparison table, the per-class chart and the annotated page. Use the model tabs,
    and the **Download** buttons for a PNG or JSON export. Hover over a box to see its label and confidence.
-5. Change the language in the sidebar (**Region names**) to see the labels in Hindi, Bengali, Tamil and so on.
+5. Change the language in the sidebar (**Region names**) to see the labels in Bengali.
    This updates the results instantly without re-running the models.
 
 ### Step 9: Sidebar settings
@@ -672,7 +674,7 @@ To stop the app, press `Ctrl + C` in the terminal.
 | Scans are slow | Turn off *Multi-scale boost*, or switch off one model. |
 | No GPU found | The app falls back to the CPU automatically. The sidebar shows the device in use. |
 | Port 8501 already in use | `python -m streamlit run app.py --server.port 8502` |
-| Indic labels show as empty squares | Your system needs an Indic-capable font (Windows has *Nirmala UI* built in). |
+| Bengali labels show as empty squares | Your system needs a Bengali-capable font (Windows has *Nirmala UI* built in). |
 
 ### Setup summary for each model
 
@@ -698,7 +700,7 @@ All models share one environment (steps 3 to 5).
   contribution of multi-scale and ensemble fusion has not been benchmarked on the full test set.
 - **Hierarchical classes.** Distinguishing headline levels, list levels and question levels depends on subtle size
   cues and gives the lowest per-class scores.
-- **Translations.** The 12-language labels are for display and need native-speaker review before formal use.
+- **Translations.** The Bengali labels are for display and need native-speaker review before formal use.
 - **One page at a time.** There is no multi-page PDF handling.
 
 **Future work**
@@ -716,7 +718,7 @@ All models share one environment (steps 3 to 5).
 | Path | What it is |
 |---|---|
 | `app.py` | The Streamlit app: animations, live reveal, multi-scale inference, ensemble fusion, localised results, exports |
-| `i18n.py` | Names for all 42 classes in 12 languages |
+| `i18n.py` | Names for all 42 classes in English and Bengali |
 | `requirements.txt` | Python dependencies for the app |
 | `weights/` | Model checkpoints (downloaded separately, not in git) |
 | `yolo26/` | Scripts to prepare the data, train and evaluate YOLO26 |

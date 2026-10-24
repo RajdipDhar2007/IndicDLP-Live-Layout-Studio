@@ -2,7 +2,7 @@
 
 Upload a document page, watch a scan sweep over it, then see every IndicDLP model detect
 layout regions one box at a time, live in the browser. Region names can be shown in English
-or any of 11 Indic languages, and models can be fused for higher recall.
+or Bengali, and models can be fused for higher recall.
 
 Run:  python -m streamlit run app.py
 """
@@ -273,8 +273,7 @@ html,body{{margin:0;background:transparent}}
 .b:hover{{background:color-mix(in srgb,var(--c) 38%,transparent);z-index:5}}
 .l{{position:absolute;left:-2px;bottom:100%;white-space:nowrap;background:var(--c);color:#0a0b1a;font-weight:700;
  font-size:clamp(8px,1.3cqw,17px);line-height:1.35;padding:0 .4em;border-radius:3px 3px 0 0;
- font-family:'Nirmala UI','Noto Sans','Noto Sans Devanagari','Noto Sans Bengali','Noto Sans Tamil','Noto Sans Telugu',
- 'Noto Sans Kannada','Noto Sans Malayalam','Noto Sans Gujarati','Noto Sans Gurmukhi','Noto Sans Oriya','Segoe UI',sans-serif}}
+ font-family:'Nirmala UI','Noto Sans','Noto Sans Bengali','Segoe UI',sans-serif}}
 .l.in{{bottom:auto;top:0;border-radius:0 0 3px 0}}
 .b.q .l{{display:none}}.b.q:hover .l{{display:block}}
 @keyframes in{{from{{opacity:0;transform:scale(.97)}}to{{opacity:1;transform:none}}}}
@@ -326,8 +325,7 @@ def progress_html(p: float, text: str) -> str:
 CSS = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&display=swap');
-:root{--indic:'Nirmala UI','Noto Sans','Noto Sans Devanagari','Noto Sans Bengali','Noto Sans Tamil','Noto Sans Telugu',
- 'Noto Sans Kannada','Noto Sans Malayalam','Noto Sans Gujarati','Noto Sans Gurmukhi','Noto Sans Oriya','Segoe UI',sans-serif}
+:root{--indic:'Nirmala UI','Noto Sans','Noto Sans Bengali','Segoe UI',sans-serif}
 .stApp{background:radial-gradient(1200px 600px at 10% -10%,#1b1f4a 0%,transparent 60%),
  radial-gradient(900px 500px at 100% 0%,#3a1450 0%,transparent 55%),#0a0b1a;}
 .hero{padding:1.2rem 0 .4rem;animation:rise .8s ease both}
@@ -585,7 +583,7 @@ def main() -> None:
         st.session_state.setdefault(k, v)
     st.html(CSS)
     st.html('<div class="hero"><h1>IndicDLP Live Layout Studio</h1>'
-            '<p>Drop in a document page and watch YOLOv10x, DocLayout-YOLO and YOLO26x read its layout, region by region, in 12 languages.</p></div>')
+            '<p>Drop in a document page and watch YOLOv10x, DocLayout-YOLO and YOLO26x read its layout, region by region, in English and Bengali.</p></div>')
     cfg = sidebar()
     lang = st.session_state["lang"]
 
