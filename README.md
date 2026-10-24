@@ -746,7 +746,51 @@ python yolo26/evaluate.py --data indicdlp_yolo/indicdlp.yaml
 
 This prints mAP[50:95], mAP50, precision and recall on the validation pages.
 
-### 7.2 Discussion
+### 7.2 Demonstration: input and output
+
+Two archival newspaper pages were run through the app with its default settings. The output is the **Ensemble Fusion**
+result: the boxes of the enabled models merged with Weighted Boxes Fusion. Each box carries the label of its region
+and the model's confidence (0 to 1).
+
+#### Demo 1: English newspaper (*Amrita Bazar Patrika*, 15 August 1947)
+
+| Input | Output |
+|:---:|:---:|
+| <img src="docs/images/demo1_input.jpg" width="420" alt="Scanned front page of the Amrita Bazar Patrika, 15 August 1947"> | <img src="docs/images/demo1_output.jpg" width="420" alt="The same page with detected regions drawn as labelled boxes"> |
+
+What the output shows:
+
+- The banner headline "India Independent Today" is found as a `flag` (0.89), and the newspaper title as a second `flag` (0.50).
+- The main headlines are found as `headline` (0.74 and 0.83), with their sub-headlines as `sub-headline` (0.38 to 0.64).
+- Both photographs are `figure` (0.95), each with its `figure-caption` (0.81 and 0.79), and the two round portraits at the
+  top are also found as `figure`.
+- The Hindusthan General Insurance box is an `advertisement` (0.95). The poem and the advertisement below it on the right
+  appear to be covered by a single `advertisement` box (0.92).
+- Body text is found as many `paragraph` boxes (blue), including the narrow columns at the bottom.
+- Small page furniture such as the registration line, volume and issue, and date line is found as `folio` and `dateline`
+  boxes, with lower confidence (about 0.28 to 0.62).
+
+#### Demo 2: Bengali newspaper page
+
+| Input | Output |
+|:---:|:---:|
+| <img src="docs/images/demo2_input.jpg" width="420" alt="Scanned Bengali newspaper page with eight advertisements around two text columns"> | <img src="docs/images/demo2_output.jpg" width="420" alt="The same page with detected regions drawn as labelled boxes"> |
+
+What the output shows:
+
+- Seven of the large advertisements around the text are detected as `advertisement` (0.81 to 0.94). The small advertisement at
+  the top left is labelled `figure` (0.26) instead, which is a mistake.
+- The two flag illustrations are found: one as part of an `advertisement`, one as a `figure` (0.92).
+- The three text columns are found as `paragraph` boxes (blue). The article title is a `section-title` (0.39 and 0.42) and the
+  author line a `sub-headline` (0.29).
+- The page header is found as `header`, `folio` (0.70) and `page-number` (0.29), and the "continued" line at the bottom as
+  `jumpline` (0.41).
+
+Both pages are old, low-contrast scans with stains and torn edges. The large, distinctive regions (photographs,
+advertisements, headlines, body columns) receive high confidence, while small page furniture and headline levels receive
+low confidence and are the least reliable, as the per-class scores in Section 7.1 also show.
+
+### 7.3 Discussion
 
 The per-class scores above show the same pattern for YOLO26x: large, visually distinctive regions (table, paragraph,
 figure, headline) score high, while hierarchy-dependent classes (headline levels, list levels, question levels) and
