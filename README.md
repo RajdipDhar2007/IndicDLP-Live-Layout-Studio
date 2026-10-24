@@ -12,10 +12,13 @@
 
 Document layout parsing, the task of locating and classifying the structural regions of a page (headlines,
 paragraphs, figures, tables, page furniture and so on), is the first step of almost every document digitisation
-pipeline. For Indian-language documents, here English and Bengali, the task is difficult: scripts are visually complex, pages are often
+pipeline. For English and Bengali documents the task is difficult: the Bengali script is visually complex, pages are often
 multi-column and mixed-script, and a large share of archival material is degraded. The recent **IndicDLP** dataset
-and its fine-tuned detectors address this with 119,806 annotated pages in 11 Indic languages and English and a
+and its fine-tuned detectors address this with 119,806 annotated pages and a
 42-class label schema, but the models are released as research checkpoints with no end-user interface.
+
+*New to the topic? Read [Start here](#start-here-the-project-explained-from-scratch) first: it explains in plain
+language what the models do, how they are trained, how they draw the boxes and which data they used.*
 
 This work presents **IndicDLP Live Layout Studio**, a web application that makes those detectors usable and
 inspectable. It (i) runs three state-of-the-art detectors (YOLOv10x, DocLayout-YOLO and YOLO26) behind one unified
@@ -25,13 +28,151 @@ Fusion, which combine the outputs of several passes or several models into a sin
 region; and (iv) renders the 42 region classes in **English and Bengali**, with colour-coded, exportable results (annotated
 PNG and structured JSON).
 
-**Keywords:** document layout analysis, Indic scripts, object detection, YOLOv10, DocLayout-YOLO, YOLO26,
+**Keywords:** document layout analysis, Bengali script, object detection, YOLOv10, DocLayout-YOLO, YOLO26,
 weighted boxes fusion, English and Bengali user interface, Streamlit.
+
+---
+
+## Start here: the project explained from scratch
+
+You do not need any background in computer vision or machine learning to read this part. Everything later in the
+document goes into more detail, but this section is meant to be enough on its own.
+
+### What problem does it solve?
+
+A scanned newspaper or textbook page is just a picture to a computer. It does not know that one block is a headline,
+another is a paragraph, another is a photograph and another is a page number. **Document layout analysis** means
+finding those blocks and naming them. The result is a list of **boxes**: each box is a rectangle on the page plus a
+label such as `headline`, `paragraph`, `figure` or `table`. This is usually the first step before reading the text,
+searching a library of scanned pages, or making pages accessible.
+
+This project is a web app. You upload a page (English or Bengali), the app finds the boxes, draws them on your page
+one by one so you can watch, and shows the label of each box in English or Bengali.
+
+### What is the "model"?
+
+The model is a program called a **neural network**. Nobody wrote rules such as "big text at the top is a headline".
+Instead, the network is a huge list of numbers (called **weights**; the biggest model here has about 59 million of
+them) and a fixed recipe that combines the page's pixels with those numbers. With the right numbers the recipe turns a
+picture into boxes and labels. Finding the right numbers is called **training**.
+
+### How does the model learn? (training)
+
+Think of teaching a child to spot headlines by showing thousands of marked-up pages.
+
+1. **Examples with answers.** We have many pages where people have already drawn the correct boxes and chosen the
+   correct label for each one. These are the *training pages*. The human-drawn boxes are the **ground truth**.
+2. **Guess.** The model looks at a training page, with its current numbers, and guesses boxes and labels. At the start
+   the numbers are not tuned yet, so the guesses are poor.
+3. **Compare.** A formula called the **loss** measures how wrong the guess was: boxes in the wrong place or the wrong
+   size, and wrong or missing labels all add to the loss.
+4. **Adjust.** An algorithm called gradient descent changes all the weights a tiny amount in the direction that makes
+   the loss smaller.
+5. **Repeat.** Steps 2 to 4 run on thousands of pages, over and over. One full pass over all training pages is an
+   **epoch**. YOLO26x was trained for 40 epochs.
+6. **Check on pages it has never seen.** After each epoch the model is tested on separate *validation pages* that were
+   not used for learning. This shows whether it really learned the layout rules or just memorised the training pages.
+   The best-scoring version is saved and used by the app.
+
+Two things make training easier than starting from nothing:
+
+- **Pretraining.** Instead of random numbers, each model starts from numbers that were already trained on a very large
+  collection of other images. It already knows how to see edges, shapes and textures. Training on layout pages then
+  only has to teach it the new task.
+- **Augmentation.** Each training page is randomly altered a little each time (resized, recoloured, four pages tiled
+  into one picture). This makes the model robust. Flipping and rotating are switched off, because mirrored text would
+  never occur in real pages.
+
+### How does the model draw the boxes? (detection)
+
+When you upload a page, the model works in one pass, in these steps:
+
+1. **Resize.** The page is scaled to a fixed size (1024 pixels on the long side by default).
+2. **Look at the picture in layers.** The first layers of the network pick out simple things such as edges and strokes.
+   Later layers combine them into letters, lines of text, columns, photographs and borders. The network keeps three
+   "views" of the page: a detailed one (good for small things such as page numbers), a medium one, and a coarse one
+   (good for big things such as a whole table).
+3. **Lay an invisible grid over each view.** At every square of the grid the model asks: *"Is the centre of some
+   region here? If so, how far is it from this square to the left, top, right and bottom edge of the region, and
+   which of the 42 labels is it?"* It answers with four distances (that is the box) and 42 scores, one per label.
+   A single page therefore produces thousands of candidate boxes, most of them with very low scores.
+4. **Pick the winners.** Several neighbouring squares often propose almost the same box. Older detectors remove the
+   duplicates with a step called **non-maximum suppression** (NMS): keep the highest-scoring box and delete any other
+   box that overlaps it too much. The newer models used here (YOLOv10 and YOLO26) are trained so that only one box
+   per region ends up with a high score, so they need no NMS at all.
+5. **Keep the confident ones.** Each remaining box has a **confidence** from 0 to 1. Boxes below the confidence
+   threshold (0.25 in the app) are thrown away.
+6. **Output.** What is left is the final answer: for each region, the rectangle `(x1, y1, x2, y2)` in pixels, its
+   label, and its confidence. The app draws these on your page and can export them as an image and a JSON file.
+
+The three models are all members of the **YOLO** family ("You Only Look Once"), named for the fact that they find all
+boxes in one look at the page instead of searching region by region.
+
+### What data was used?
+
+**The dataset: IndicDLP.** A public collection of document pages, published by AI4Bharat, built for exactly this task.
+As published, it has 119,806 page images from 12 kinds of document (novels, textbooks, magazines, laws, research
+papers, manuals, brochures, syllabi, question papers, notices, forms, newspapers), with 1,856,241 boxes drawn by human
+annotators using the open-source Shoonya tool. Every box is one of **42 labels**, listed in
+[Section 3.1](#31-the-42-region-classes). This project uses the English and Bengali interface only.
+
+**What each model learned from.** The models in this project did not all start the same way or see the same amount of
+data:
+
+| Model | Step 1: general pretraining | Step 2: layout training on IndicDLP |
+|---|---|---|
+| YOLOv10x | A large synthetic (computer-generated) layout collection called UED-mini, as stated for this checkpoint | The IndicDLP training pages, by the checkpoint's authors |
+| DocLayout-YOLO | Synthetic layout pages generated by its own authors (the DocSynth-300K collection, according to their paper) | The IndicDLP training pages, by the checkpoint's authors |
+| YOLO26x | COCO, a standard collection of everyday photographs (people, cars, animals) with 80 object types, which is what the official `yolo26x.pt` starts from | **Trained in this project** on 12,345 IndicDLP pages |
+
+The YOLOv10x and DocLayout-YOLO files are released checkpoints; this project downloads and uses them as they are, and
+the details above come from the checkpoint providers, not from re-training. **YOLO26x is the only model trained
+here.** The IndicDLP files for it were downloaded in numbered pieces (shards). Only every eighth training shard was
+used (21 of 163, about 13% of the training pages = 12,345 pages), and 6 of 23 validation shards (3,127 pages). The
+training pages were not selected by language, because the data files have no language field. This much smaller
+training set, plus the pretraining difference, is the main reason YOLO26x scores lower than the other two (see
+[Section 7](#7-experiments-and-results)).
+
+### How is "how good" measured?
+
+- **IoU** (intersection over union) says how well a predicted box matches the human box: the overlapping area
+  divided by the total area covered by the two boxes. 1.0 is a perfect match and 0 means no overlap.
+- A prediction counts as correct if its label is right and its IoU is above a bar (for example 0.5).
+- **Precision** is the share of predicted boxes that are correct. **Recall** is the share of real boxes the model found.
+- **mAP** (mean average precision) combines both into one number per label, then averages over the 42 labels.
+  **mAP50** uses an IoU bar of 0.5; **mAP50-95** averages over bars from 0.5 to 0.95, so it also rewards tightly drawn
+  boxes. This is the figure quoted in this document. Higher is better.
+
+### What does the app add on top of the models?
+
+- **Three models in one place**, which you can switch on and off and compare.
+- **Multi-scale boost.** The same page is run through a model at two sizes and the two answers are merged, which
+  finds small or faint regions more often.
+- **Ensemble fusion.** The answers of several models are merged into one, using a method called Weighted Boxes Fusion
+  (overlapping boxes of the same label are averaged, weighted by confidence).
+- **Live reveal and bilingual labels.** The boxes appear one by one, and the label names can be switched between
+  English and Bengali without running the model again.
+
+### Words used in this document
+
+| Word | Meaning |
+|---|---|
+| Model / network | The program with millions of tuned numbers that turns a page into boxes |
+| Weights / checkpoint | The tuned numbers / the file they are saved in |
+| Training, epoch | Tuning the numbers on example pages / one pass over all of them |
+| Ground truth | The correct boxes drawn by people |
+| Validation pages | Pages kept aside to test the model, never used to tune it |
+| Pretraining | Starting from numbers already tuned on other images |
+| Confidence | How sure the model is about a box, 0 to 1 |
+| NMS | Removing duplicate overlapping boxes |
+| IoU | Overlap between two boxes, 0 to 1 |
+| mAP | The overall accuracy score, higher is better |
 
 ---
 
 ## Contents
 
+0. [Start here: the project explained from scratch](#start-here-the-project-explained-from-scratch)
 1. [Introduction](#1-introduction)
 2. [Background and related work](#2-background-and-related-work)
 3. [Dataset and label schema](#3-dataset-and-label-schema)
@@ -57,8 +198,7 @@ and figure extraction, accessibility tagging, search indexing) depend.
 
 ### 1.2 Motivation
 
-- **Script and language diversity.** India has many scripts and languages. Models trained mostly on English
-  scientific papers transfer poorly to them.
+- **Script diversity.** Models trained mostly on English scientific papers transfer poorly to Bengali pages.
 - **Domain diversity.** Newspapers, textbooks, exam papers, forms, notices and magazines have very different layouts.
 - **Degradation.** Archival scans show ink bleed, stains, skew and low contrast.
 - **Usability gap.** Research checkpoints are hard to run, compare and inspect. A researcher or archivist should be
@@ -98,6 +238,9 @@ weighted by confidence*, which usually gives better localisation. It is used her
 multi-model fusion.
 
 ### 2.1 How the detectors find and draw boxes
+
+A beginner-friendly version of this subsection is in [Start here](#start-here-the-project-explained-from-scratch).
+The version below is more technical.
 
 All three models are **single-stage object detectors**: one forward pass over the page produces every box and its
 class, with no separate region-proposal step. The description below is the general YOLO-family design; the exact
@@ -161,34 +304,21 @@ DocLayout-YOLO adds a module that looks at both page-level structure and small r
 ## 3. Dataset and label schema
 
 The models were trained on **IndicDLP** (statistics below are as published for the whole dataset). This project is
-scoped to **English and Bengali**: the app's interface and region names are provided in those two languages only,
-although the detectors themselves were trained on all of the languages listed.
+scoped to **English and Bengali**: the app's interface and region names are provided in those two languages only.
+The dataset files used here carry no per-page language field, so the detectors were trained on the full training split and cannot be
+restricted to these two languages without a separate language filter.
 
 | Property | Value |
 |---|---|
 | Pages | 119,806 high-resolution images |
 | Annotations | 1,856,241 rectangular layout regions |
-| Languages | 11 Indic languages + English |
+| Languages | Multilingual dataset; this project uses English and Bengali |
 | Domains | 12 (novels, textbooks, magazines, acts and rules, research papers, manuals, brochures, syllabi, question papers, notices, forms, newspapers) |
 | Sources | Digitally born and scanned documents |
 | Labels | 42 physical and logical region classes |
 | Annotation tool | Shoonya (open source, built on Label Studio) |
 
-```mermaid
-pie showData title Language share of IndicDLP pages (%)
-    "Tamil" : 9.3
-    "English" : 9.1
-    "Malayalam" : 8.9
-    "Assamese" : 8.6
-    "Gujarati" : 8.6
-    "Hindi" : 8.6
-    "Kannada" : 8.5
-    "Marathi" : 8.5
-    "Odia" : 8.2
-    "Bengali" : 7.6
-    "Telugu" : 7.2
-    "Punjabi" : 6.9
-```
+Share of the dataset's pages in the two languages used here (as published): English 9.1%, Bengali 7.6%.
 
 ```mermaid
 pie showData title Domain share of IndicDLP pages (%)
@@ -205,6 +335,16 @@ pie showData title Domain share of IndicDLP pages (%)
     "Forms" : 5.6
     "Notices" : 5.4
 ```
+
+### 3.0 What this project actually used
+
+| Item | Used here |
+|---|---|
+| YOLOv10x and DocLayout-YOLO | Released checkpoints, fine-tuned by their authors on IndicDLP; not re-trained here |
+| YOLO26x training pages | 12,345 pages = 21 of 163 training shards (every eighth), about 13% of the training split |
+| YOLO26x validation pages | 3,127 pages = 6 of 23 validation shards |
+| Conversion | `yolo26/prepare_data.py` turns each page and its boxes into the YOLO text format (class, centre x, centre y, width, height, all relative to the page) |
+| Language selection | None: the data files have no language field, so pages in all languages were used |
 
 ### 3.1 The 42 region classes
 
@@ -529,14 +669,18 @@ learning rate, no flips or rotation, mosaic closed for the last 8 epochs.
 | Precision | 64.5 |
 | Recall | 59.5 |
 
-YOLO26x is clearly behind YOLOv10x. Likely reasons: YOLOv10x was pretrained on a large synthetic layout corpus
-before fine-tuning, while YOLO26x started from COCO only; about half of the 42 classes have under 1,000 training
-boxes; and a batch of 2 is a weak training recipe. Strongest classes (per-class mAP[50:95]): table 82, paragraph 82,
+YOLO26x is clearly behind YOLOv10x. Likely reasons, in the order I would expect them to matter: (1) it saw only
+about 13% of IndicDLP's training pages (every eighth shard: 21 of 163, i.e. 12,345 pages), while the published
+checkpoints were presumably fine-tuned on the full training split (not verified here); (2) YOLOv10x was pretrained on a large synthetic layout
+corpus before fine-tuning, while YOLO26x started from COCO photographs only; (3) about half of the 42 classes have
+under 1,000 training boxes in this subset; and (4) a batch of 2 is a weak training recipe. These reasons have not
+been separated by experiments here. Strongest classes (per-class mAP[50:95]): table 82, paragraph 82,
 figure 74, headline 71, unordered-list 67. Weakest: subsub-headline 3, subsub-section-title 7, answer 13, quote 13,
 sub-unordered-list 16, sub-section-title 18. The trained checkpoint (118 MB) is larger than GitHub's file limit and
 is therefore not in the repository. To get it, build the dataset and train (the dataset is
 [`ai4bharat/indicdlp`](https://huggingface.co/datasets/ai4bharat/indicdlp) on Hugging Face; the training run takes
-about 20 hours), or use the app with the other two models, which work without it:
+about 20 hours on the 13% subset; using every shard would take roughly eight times longer), or use the app with the
+other two models, which work without it:
 
 ```bash
 python yolo26/prepare_data.py --raw <folder-with-parquet-shards> --out <dataset-folder>
@@ -767,7 +911,7 @@ All models share one environment (steps 3 to 5).
 - Quantitative evaluation of multi-scale and ensemble fusion on the IndicDLP test split, with per-class AP.
 - Tuned per-model fusion weights instead of equal weighting.
 - Multi-page PDF input and batch processing.
-- A learned reading-order model and hand-off of detected regions to OCR for Indic scripts.
+- A learned reading-order model and hand-off of detected regions to OCR for Bengali.
 - Additional export formats (COCO JSON, PAGE-XML, HTML).
 
 ---

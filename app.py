@@ -190,7 +190,7 @@ def fit(image: Image.Image, max_w: int = 900) -> tuple[Image.Image, float]:
 
 
 def draw_box(canvas: Image.Image, det: dict, scale: float, number: int) -> Image.Image:
-    """Colour-coded box with a numbered badge (ASCII only: Indic text is rendered in the browser instead)."""
+    """Colour-coded box with a numbered badge (ASCII only: Bengali text is rendered in the browser instead)."""
     base = canvas.convert("RGBA")
     overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
     d = ImageDraw.Draw(overlay)
@@ -248,7 +248,7 @@ def scan_html(image: Image.Image, caption: str) -> str:
 def overlay_doc(image: Image.Image, dets: list[dict], lang: str) -> str:
     """Self-contained HTML page (shown in an iframe): the document with colour-coded, localised region labels.
 
-    Labels are real HTML text, so the browser shapes Indic scripts correctly and sizes each label to its text.
+    Labels are real HTML text, so the browser shapes the Bengali script correctly and sizes each label to its text.
     """
     w, h = image.size
     dense = len(dets) > 30  # on busy pages paragraph labels are shown on hover only
@@ -325,7 +325,7 @@ def progress_html(p: float, text: str) -> str:
 CSS = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&display=swap');
-:root{--indic:'Nirmala UI','Noto Sans','Noto Sans Bengali','Segoe UI',sans-serif}
+:root{--script:'Nirmala UI','Noto Sans','Noto Sans Bengali','Segoe UI',sans-serif}
 .stApp{background:radial-gradient(1200px 600px at 10% -10%,#1b1f4a 0%,transparent 60%),
  radial-gradient(900px 500px at 100% 0%,#3a1450 0%,transparent 55%),#0a0b1a;}
 .hero{padding:1.2rem 0 .4rem;animation:rise .8s ease both}
@@ -364,22 +364,22 @@ CSS = """
 .tile{background:#12153a;border:1px solid #262b5e;border-radius:12px;padding:.5rem .7rem;animation:rise .4s ease both}
 .tile span{display:block;color:#8a90b8;font-size:.7rem;text-transform:uppercase;letter-spacing:.08em}
 .tile b{color:#fff;font-size:1.2rem;font-family:'Space Grotesk',sans-serif}
-.feed{display:flex;flex-direction:column;gap:.35rem;min-height:300px;font-family:var(--indic)}
+.feed{display:flex;flex-direction:column;gap:.35rem;min-height:300px;font-family:var(--script)}
 .feed-row{display:flex;align-items:center;gap:.5rem;padding:.4rem .7rem;border-radius:10px;border-left:4px solid var(--c);
  background:rgba(255,255,255,.04);animation:pop .35s ease both;color:#e8eaff;font-size:.9rem}
 .feed-row .dot{width:9px;height:9px;border-radius:50%;background:var(--c);box-shadow:0 0 10px var(--c)}
 .feed-row .conf{margin-left:auto;color:var(--c);font-weight:700}
 .feed-row .xy{color:#7d83ab;font-size:.72rem}
-.chips{display:flex;flex-wrap:wrap;gap:.35rem;margin:.5rem 0;font-family:var(--indic)}
+.chips{display:flex;flex-wrap:wrap;gap:.35rem;margin:.5rem 0;font-family:var(--script)}
 .chip{padding:.15rem .6rem;border-radius:99px;border:1px solid var(--c);color:var(--c);font-size:.8rem;animation:pop .3s ease both}
 .chip i{font-style:normal;background:var(--c);color:#0a0b1a;border-radius:99px;padding:0 .4rem;margin-left:.2rem;font-weight:700}
-.legend{display:flex;flex-direction:column;gap:.4rem;margin:.6rem 0;font-family:var(--indic)}
+.legend{display:flex;flex-direction:column;gap:.4rem;margin:.6rem 0;font-family:var(--script)}
 .legend-group{display:flex;flex-wrap:wrap;gap:.35rem;align-items:center}
 .legend-title{min-width:120px;color:#8a90b8;font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;font-family:'Space Grotesk',sans-serif}
 .pbar{position:relative;height:26px;border-radius:99px;background:#12153a;border:1px solid #262b5e;overflow:hidden;margin:.3rem 0 .6rem}
 .pfill{height:100%;background:linear-gradient(90deg,#3b82f6,#a78bfa,#ff7ad9);transition:width .2s;
  background-size:100% 100%}
-.pbar span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:.78rem;color:#fff;font-family:var(--indic)}
+.pbar span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:.78rem;color:#fff;font-family:var(--script)}
 </style>
 """
 
