@@ -346,6 +346,8 @@ pie showData title Domain share of IndicDLP pages (%)
 | Conversion | `yolo26/prepare_data.py` turns each page and its boxes into the YOLO text format (class, centre x, centre y, width, height, all relative to the page) |
 | Language selection | None: the data files have no language field, so pages in all languages were used |
 
+Sample pages are shown in [Section 3.2](#32-sample-annotated-pages-from-the-dataset).
+
 ### 3.1 The 42 region classes
 
 For display, the app groups the classes into eight colour families so that related regions are visually related.
@@ -360,6 +362,36 @@ For display, the app groups the classes into eight colour families so that relat
 | Page furniture | header, footer, page-number, folio, flag, dateline, jumpline |
 | Exam parts | first-level-question, second-level-question, third-level-question, options, answer |
 | Other | advertisement, contact-info, placeholder-text, website-link |
+
+### 3.2 Sample annotated pages from the dataset
+
+These pages come from IndicDLP. Each coloured rectangle is a region drawn by a human annotator, and the tag above it
+is its label. They show what the models are trained to reproduce. Only English and Bengali pages are shown, matching
+the scope of this project.
+
+| Bengali brochure (`br_bn_000817_1`) | Bengali form (`fm_bn_000220_0`) |
+|:---:|:---:|
+| <img src="docs/images/br_bn_000817_1.png" width="400" alt="Bengali brochure with flag, paragraph, dateline and contact-info regions"> | <img src="docs/images/fm_bn_000220_0.png" width="400" alt="Bengali government form with header, table, placeholder-text and footnote regions"> |
+| A poster with a decorative `flag`, short `paragraph` text, a `dateline` and `contact-info`. | A form full of `placeholder-text` fields, a `table`, `figure` seals, a `sidebar` and `footnote`s. |
+
+| Bengali newspaper (`np_bn_000047_0`) | Bilingual question paper (`qp_bn_000287_1`) |
+|:---:|:---:|
+| <img src="docs/images/np_bn_000047_0.png" width="400" alt="Bengali newspaper page with headline, sub-headline, paragraph, figure and advertisement regions"> | <img src="docs/images/qp_bn_000287_1.png" width="400" alt="English and Bengali chemistry question paper with first-level-question, options and formula regions"> |
+| A dense page: masthead `flag`, several headline levels, many `paragraph` columns, `figure`, `jumpline`s and `advertisement`s. | English and Bengali columns side by side, with `first-level-question`, `options` and many `formula` regions. |
+
+| English research paper (`rp_en_001247_0`) |
+|:---:|
+| <img src="docs/images/rp_en_001247_0.png" width="400" alt="English astronomy paper page with figure, figure-caption, paragraph and reference regions"> |
+| A `figure` with its `figure-caption`, body `paragraph`s, `section-title`s, a `reference` list and a `footer`. |
+
+### 3.3 Region counts per split
+
+The table below (from the dataset's publication) lists how many regions of each of the 42 classes the training,
+validation and test splits contain. Paragraphs make up about a third of all regions, while classes such as
+`subsub-unordered-list` (96 training regions), `index` (460) and `table-of-contents` (953) are rare. This imbalance is
+one reason the rare classes get the lowest scores.
+
+<img src="docs/images/IndicDLP_instances.png" width="520" alt="Table of region instance counts and percentages per class for the train, validation and test splits">
 
 ---
 
@@ -924,6 +956,7 @@ All models share one environment (steps 3 to 5).
 | `i18n.py` | Names for all 42 classes in English and Bengali |
 | `requirements.txt` | Python dependencies for the app |
 | `weights/` | Model checkpoints (downloaded separately, not in git) |
+| `docs/images/` | Sample annotated dataset pages and the class-count table shown in Section 3 |
 | `yolo26/` | Scripts to prepare the data, train and evaluate YOLO26 |
 
 ---
