@@ -25,7 +25,6 @@ from i18n import LANGS, label as tr
 
 ROOT = Path(__file__).resolve().parent
 WEIGHTS = ROOT / "weights"
-EXAMPLE_DIRS = [ROOT / "data" / "examples", ROOT / "fig" / "images"]
 ZENODO = "https://zenodo.org/records/15881917/files/{}?download=1"
 DEFAULTS = dict(conf=0.25, iou=0.70, imgsz=1024, speed="Normal", boost=True, fuse=True, lang="en")
 
@@ -390,13 +389,7 @@ CSS = """
 # ----------------------------------------------------------------------------
 # Inputs
 # ----------------------------------------------------------------------------
-def list_examples() -> dict[str, Path]:
-    out: dict[str, Path] = {}
-    for d in EXAMPLE_DIRS:
-        if d.exists():
-            for p in sorted([*d.glob("*.png"), *d.glob("*.jpg")]):
-                out[p.stem] = p
-    return out
+
 
 
 def download_weights(spec: ModelSpec) -> None:
@@ -596,28 +589,18 @@ def main() -> None:
     cfg = sidebar()
     lang = st.session_state["lang"]
 
-    examples = list_examples()
-    src = st.radio("Source", ["Upload", "Sample gallery"], horizontal=True, label_visibility="collapsed")
     image: Image.Image | None = None
     name = "document"
-    if src == "Upload":
-        up = st.file_uploader("Upload a document page", type=["png", "jpg", "jpeg", "bmp", "webp"])
-        if up is not None:
-            try:
-                image = Image.open(up).convert("RGB")
-                name = Path(up.name).stem
-            except Exception:
-                st.error("That file couldn't be read as an image.")
-    else:
-        if examples:
-            pick = st.selectbox("Sample page", list(examples), index=0)
-            image = Image.open(examples[pick]).convert("RGB")
-            name = pick
-        else:
-            st.warning("No sample images found.")
+    up = st.file_uploader("Upload a document page", type=["png", "jpg", "jpeg", "bmp", "webp"])
+    if up is not None:
+        try:
+            image = Image.open(up).convert("RGB")
+            name = Path(up.name).stem
+        except Exception:
+            st.error("That file couldn't be read as an image.")
 
     if image is None:
-        st.info("⬆️ Upload a page (or pick a sample) to begin.")
+        st.info("⬆️ Upload a page to begin.")
         return
     if not cfg["models"]:
         st.warning("Enable at least one model in the sidebar.")

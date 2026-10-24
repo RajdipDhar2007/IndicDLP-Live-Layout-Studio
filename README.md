@@ -23,9 +23,7 @@ interface; (ii) adds a **multi-scale inference** stage and an **ensemble fusion*
 Fusion, which combine the outputs of several passes or several models into a single, more complete prediction;
 (iii) animates the detection process in real time so that the behaviour of each model can be observed region by
 region; and (iv) renders the 42 region classes in **12 languages**, with colour-coded, exportable results (annotated
-PNG and structured JSON). Qualitative results on a Bengali newspaper of 1872 and an English newspaper of 1931 show
-that the system recovers the masthead, date line, columns, headlines, photograph and advertisements of heavily
-degraded historical pages.
+PNG and structured JSON).
 
 **Keywords:** document layout analysis, Indic scripts, object detection, YOLOv10, DocLayout-YOLO, YOLO26,
 weighted boxes fusion, multilingual user interface, Streamlit.
@@ -62,8 +60,7 @@ and figure extraction, accessibility tagging, search indexing) depend.
 - **Script and language diversity.** India has many scripts and languages. Models trained mostly on English
   scientific papers transfer poorly to them.
 - **Domain diversity.** Newspapers, textbooks, exam papers, forms, notices and magazines have very different layouts.
-- **Degradation.** Archival scans show ink bleed, stains, skew and low contrast (see the 1872 and 1931 samples in
-  [Section 7](#7-experiments-and-results)).
+- **Degradation.** Archival scans show ink bleed, stains, skew and low contrast.
 - **Usability gap.** Research checkpoints are hard to run, compare and inspect. A researcher or archivist should be
   able to drop in a page and see what each model finds, and why a prediction might be wrong.
 
@@ -175,7 +172,7 @@ engine, the fusion module, the localisation module and the exporters are separat
 ```mermaid
 flowchart TB
     subgraph UI["Presentation layer (Streamlit)"]
-        U1["Image upload / sample gallery"]
+        U1["Image upload"]
         U2["Sidebar: models, language, thresholds"]
         U3["Animated scan + live reveal"]
         U4["Results: table, chart, annotated page"]
@@ -245,7 +242,7 @@ sequenceDiagram
     participant Mod as Detector (YOLOv10x / DocLayout-YOLO / YOLO26)
     participant Fus as Fusion (WBF)
 
-    User->>UI: Upload page or pick sample
+    User->>UI: Upload page
     User->>UI: Set models, thresholds, language
     User->>UI: Press "Scan and detect"
     UI->>UI: Play scan animation
@@ -368,7 +365,7 @@ speaker before formal use.
 | Item | Details |
 |---|---|
 | Formats | PNG, JPG / JPEG, BMP, WebP |
-| Source | Browser upload, or the sample gallery (`data/examples/`) |
+| Source | Browser upload |
 | Content | One page per run, in any supported language or domain |
 | Resolution | Arbitrary. The models see the page at the *Inference size* (default 1024 px); exports use the original resolution |
 
@@ -419,6 +416,16 @@ The values shown are illustrative.
 The reveal speed sets how long the box-by-box animation takes for a page: about 6 s (Cinematic), 3 s (Normal),
 1.2 s (Fast) or no delay (Instant), with at most 0.6 s between two boxes. The *Reset to defaults* button restores
 every value above.
+
+---|---|---|
+| Models | Which detectors run | YOLOv10x, DocLayout-YOLO |
+| Multi-scale boost | Second inference size, fused with the first | On |
+| Ensemble fusion | Fuse all models into one result | On |
+| Confidence threshold | Minimum score kept | 0.25 |
+| NMS IoU | Duplicate-removal overlap threshold | 0.70 |
+| Inference size | Input resolution (640, 800, 1024, 1280) | 1024 |
+| Region-name language | One of 12 | English |
+| Reveal speed | Animation pace only | Normal |
 
 ---
 
@@ -479,55 +486,12 @@ python yolo26/evaluate.py --data <dataset-folder>/indicdlp.yaml
 `train.py` copies the best checkpoint to `weights/yolo26_indicdlp.pt`, the file the app loads. Without it the app
 shows YOLO26x as unavailable and the other models keep working.
 
-### 7.2 Qualitative results
+### 7.2 Discussion
 
-#### Test page 1: Bengali newspaper (*Amrita Bazar Patrika*, 20 June 1872)
-
-| Input | Output |
-|:---:|:---:|
-| ![Input page: Bengali newspaper](assets/Test_Input_I.jpg) | ![Output: detected layout regions](assets/Test_Output_I.png) |
-
-*Figure 1. Left: scanned input. Right: detected regions, labelled `class confidence`.*
-
-The page is a 19th-century, low-contrast, three-column scan in Bengali script with a decorative masthead.
-Observations:
-
-- The ornate masthead is recognised as `flag` (0.93) and the surrounding banner area as `header` (0.78).
-- Small page furniture is found despite its size: the registration note as `folio` (0.61), the volume and issue
-  markers as `folio` (0.27 and 0.33) and the printed date line as `dateline` (0.49).
-- Body columns are detected as `paragraph` with high confidence (0.91 to 0.96) in the clean regions. Lower scores
-  (0.42 and 0.69) occur in the right-hand column, where the numbered legal text is more degraded and the layout is
-  less regular.
-- The small title under the masthead is detected as `section-title` (0.25), near the confidence threshold.
-
-#### Test page 2: English newspaper (*The Tribune*, Lahore, 25 March 1931)
-
-| Input | Output |
-|:---:|:---:|
-| ![Input page: English newspaper](assets/Test_Input_II.jpg) | ![Output: detected layout regions](assets/Test_Output_II.png) |
-
-*Figure 2. Left: scanned input. Right: detected regions, labelled `class confidence`.*
-
-This is a dense, high-density page with a photograph, mixed headline levels, narrow columns and several
-advertisements. Observations:
-
-- The masthead (`flag`, 0.92), the banner area (`header`, 0.88) and the date and issue lines (`folio`, `dateline`)
-  are found.
-- The photograph is located as `figure` (0.95) with its caption as `figure-caption` (0.55), showing that
-  figure-caption pairing works on a halftone photograph.
-- Headline hierarchy is resolved into `headline`, `sub-headline` and `section-title` boxes, with scores between
-  about 0.25 and 0.57. These are the lowest scores on the page, which is expected because the headline levels differ
-  mainly in size and weight.
-- Advertisements are detected with 0.62 to 0.91 confidence; an `ordered-list` is found inside a text column.
-- An ink blot on the scan does not stop neighbouring paragraphs from being detected.
-
-### 7.3 Discussion
-
-Across the two pages the pattern is consistent: large, visually distinctive regions (flag, figure, advertisement,
-well-printed paragraphs) receive high scores, while hierarchy-dependent classes (headline vs sub-headline vs
-section-title) and tiny page furniture receive lower scores. This is the same trade-off that the *Multi-scale boost*
-and *Ensemble fusion* options are meant to address, and the app lets the user observe it directly by toggling them
-and comparing the result tabs.
+The per-class scores above show the same pattern for YOLO26x: large, visually distinctive regions (table, paragraph,
+figure, headline) score high, while hierarchy-dependent classes (headline levels, list levels, question levels) and
+rare classes score low. This is the trade-off that the *Multi-scale boost* and *Ensemble fusion* options are meant to
+address, and the app lets the user observe it directly by toggling them and comparing the result tabs.
 
 ---
 
@@ -542,7 +506,7 @@ This section is the fastest route to a working demo.
 2. **Minimum setup (about 10 minutes plus downloads).** Follow the Quick start below. Only YOLOv10x and
    DocLayout-YOLO are needed; they run on a normal laptop, with or without a GPU.
 3. **Weights.** About 225 MB for the two YOLO models. The app downloads them with one click on first launch.
-4. **Try it.** Choose *Sample gallery*, pick a page, press *Scan & detect*, then switch the *Region names* language.
+4. **Try it.** Upload a document page, press *Scan & detect*, then switch the *Region names* language.
 5. **If something fails,** see [Troubleshooting](#step-10-troubleshooting).
 
 ### Quick start (YOLOv10x and DocLayout-YOLO)
@@ -674,7 +638,7 @@ To stop the app, press `Ctrl + C` in the terminal.
 
 ### Step 8: Using the app
 
-1. Choose **Upload** (your own page image) or **Sample gallery** (pages that ship with the project).
+1. Upload a page image (PNG, JPG, JPEG, BMP or WEBP).
 2. Click **🚀 Scan & detect**.
 3. Watch the scan, then each model's regions appear one by one with a live feed, stats and a progress bar.
 4. Scroll to **Results** for the comparison table, the per-class chart and the annotated page. Use the model tabs,
@@ -733,7 +697,7 @@ All models share one environment (steps 3 to 5).
 - **Limited training.** YOLOv10x and DocLayout-YOLO use the published checkpoints; only YOLO26x was trained here, and it is the weakest of the three. The
   contribution of multi-scale and ensemble fusion has not been benchmarked on the full test set.
 - **Hierarchical classes.** Distinguishing headline levels, list levels and question levels depends on subtle size
-  cues and gives the lowest confidences in the qualitative examples.
+  cues and gives the lowest per-class scores.
 - **Translations.** The 12-language labels are for display and need native-speaker review before formal use.
 - **One page at a time.** There is no multi-page PDF handling.
 
@@ -754,9 +718,7 @@ All models share one environment (steps 3 to 5).
 | `app.py` | The Streamlit app: animations, live reveal, multi-scale inference, ensemble fusion, localised results, exports |
 | `i18n.py` | Names for all 42 classes in 12 languages |
 | `requirements.txt` | Python dependencies for the app |
-| `assets/` | The sample input and output images used in this README |
 | `weights/` | Model checkpoints (downloaded separately, not in git) |
-| `data/examples/` | Sample pages for the gallery |
 | `yolo26/` | Scripts to prepare the data, train and evaluate YOLO26 |
 
 ---
