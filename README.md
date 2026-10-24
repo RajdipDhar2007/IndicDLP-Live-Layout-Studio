@@ -405,16 +405,20 @@ The values shown are illustrative.
 
 ### 6.3 Configurable parameters
 
-| Parameter | Role | Default |
-|---|---|---|
-| Models | Which detectors run | YOLOv10x, DocLayout-YOLO |
-| Multi-scale boost | Second inference size, fused with the first | On |
-| Ensemble fusion | Fuse all models into one result | On |
-| Confidence threshold | Minimum score kept | 0.25 |
-| NMS IoU | Duplicate-removal overlap threshold | 0.70 |
-| Inference size | Input resolution (640, 800, 1024, 1280) | 1024 |
-| Region-name language | One of 12 | English |
-| Reveal speed | Animation pace only | Normal |
+| Parameter | Role | Range | Default |
+|---|---|---|---|
+| Models | Which detectors run | YOLOv10x, DocLayout-YOLO, YOLO26x | All whose weights are present |
+| Multi-scale boost | Second inference size, fused with the first | On / Off | On |
+| Ensemble fusion | Fuse all models into one result | On / Off | On |
+| Confidence threshold | Minimum score kept | 0.05 to 0.95, step 0.05 | 0.25 |
+| NMS IoU | Duplicate-removal overlap threshold | 0.10 to 0.95, step 0.05 | 0.70 |
+| Inference size | Input resolution in pixels | 640, 800, 1024, 1280 | 1024 |
+| Region-name language | One of 12 | English and 11 Indic languages | English |
+| Reveal speed | Animation pace only, no effect on results | Cinematic, Normal, Fast, Instant | Normal |
+
+The reveal speed sets how long the box-by-box animation takes for a page: about 6 s (Cinematic), 3 s (Normal),
+1.2 s (Fast) or no delay (Instant), with at most 0.6 s between two boxes. The *Reset to defaults* button restores
+every value above.
 
 ---
 
@@ -682,14 +686,14 @@ To stop the app, press `Ctrl + C` in the terminal.
 
 | Setting | What it does | Default |
 |---|---|---|
-| Model toggles | Choose which models run | YOLOv10x and DocLayout-YOLO on |
+| Model toggles | Choose which models run | All models with weights present are on |
 | Language | Language of region names | English |
 | Multi-scale boost | Runs each model at two sizes and merges the boxes, so small or faint regions are found more often (slower) | On |
 | Ensemble fusion | Merges all enabled models into one extra result | On |
-| Confidence threshold | Minimum score for a box. Lower finds more regions but adds false boxes | 0.25 |
-| NMS IoU | Controls removal of overlapping duplicate boxes | 0.70 |
-| Inference size | Image size the model sees. 1024 is what the models were trained at | 1024 |
-| Reveal speed | How fast boxes appear in the animation | Normal |
+| Confidence threshold | Minimum score for a box (0.05 to 0.95). Lower finds more regions but adds false boxes | 0.25 |
+| NMS IoU | Controls removal of overlapping duplicate boxes (0.10 to 0.95). Higher keeps more overlapping boxes | 0.70 |
+| Inference size | Image size the model sees: 640, 800, 1024 or 1280. 1024 is what the models were trained at; larger sizes help small regions but are slower | 1024 |
+| Reveal speed | How fast boxes appear in the animation: Cinematic, Normal, Fast or Instant | Normal |
 | Reset to defaults | Restores the values above | - |
 
 ### Step 10: Troubleshooting
