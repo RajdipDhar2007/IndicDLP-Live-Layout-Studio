@@ -26,7 +26,7 @@ interface; (ii) adds a **multi-scale inference** stage and an **ensemble fusion*
 Fusion, which combine the outputs of several passes or several models into a single, more complete prediction;
 (iii) animates the detection process in real time so that the behaviour of each model can be observed region by
 region; and (iv) renders the 42 region classes in **English and Bengali**, with colour-coded, exportable results (annotated
-PNG and structured JSON).
+PNG, structured JSON and per-region cutouts that can be downloaded by clicking a box).
 
 **Keywords:** document layout analysis, Bengali script, object detection, YOLOv10, DocLayout-YOLO, YOLO26,
 weighted boxes fusion, English and Bengali user interface, Streamlit.
@@ -150,6 +150,8 @@ training set, plus the pretraining difference, is the main reason YOLO26x scores
   finds small or faint regions more often.
 - **Ensemble fusion.** The answers of several models are merged into one, using a method called Weighted Boxes Fusion
   (overlapping boxes of the same label are averaged, weighted by confidence).
+- **Click a box for its cutout and coordinates.** On the results page, clicking any box asks whether to download that
+  region as its own image (a cutout), and shows the box's pixel coordinates.
 - **Live reveal and bilingual labels.** The boxes appear one by one, and the label names can be switched between
   English and Bengali without running the model again.
 
@@ -217,6 +219,8 @@ and figure extraction, accessibility tagging, search indexing) depend.
    inference.
 6. **Export** of results as full-resolution annotated images and structured JSON, plus a per-model comparison table
    and per-class statistics.
+7. **Click-to-cutout and coordinate inspection.** Clicking a box on the results page offers a PNG cutout of exactly
+   that region and shows its `x1, y1, x2, y2` pixel coordinates; the same numbers are listed in a table and in the JSON export.
 
 ---
 
@@ -460,6 +464,8 @@ flowchart TB
 | Component | File | Responsibility |
 |---|---|---|
 | Application and UI | `app.py` | Sidebar controls, animations, orchestration, results view, exports |
+| Click-to-cutout viewer | `app.py` (`overlay_doc`) | In-browser page with clickable boxes: download prompt, in-browser crop, coordinate readout |
+| Coordinate export | `app.py` (`detections_json`, `coord_rows`) | Detections JSON and the coordinates table |
 | Model registry | `app.py` (`MODELS`) | Names, checkpoint files, expected sizes, availability checks |
 | Inference engine | `app.py` (`predict_once`, `run_model`) | Runs a model and converts its output to one common format |
 | Fusion | `app.py` (`fuse`) | Weighted Boxes Fusion for scales and for models |
@@ -475,7 +481,7 @@ flowchart LR
     C --> D["4. Each model finds boxes<br/>(optionally at two sizes)"]
     D --> E["5. Optional: merge the models<br/>with Weighted Boxes Fusion"]
     E --> F["6. Boxes are revealed one by one,<br/>then table, chart and annotated page"]
-    F --> G["7. Switch language<br/>or download PNG / JSON"]
+    F --> G["7. Switch language, click a box<br/>for its cutout, or download PNG / JSON"]
 ```
 
 The language can be switched at step 7 without running the models again, because only the label text changes.
@@ -584,31 +590,48 @@ speaker before formal use.
 For every model, and for the ensemble, the system produces:
 
 1. **Interactive annotated page.** Colour-coded boxes with labels in the chosen language and confidence on hover.
+   Clicking a box opens a prompt that shows the region's pixel coordinates and asks whether to download its **cutout**
+   (a PNG of just that region, cropped from the full-resolution page and named `<image>_<model>_<id>_<label>.png`). Colour-coded boxes with labels in the chosen language and confidence on hover.
 2. **Annotated PNG** at full resolution, labelled `class score` in English. On pages with more than 30 regions,
    `paragraph` labels are omitted to keep the image readable.
-3. **Detections JSON**, one object per region in reading order:
+3. **Detections JSON**, a header with the page size and one object per region in reading order:
 
 ```json
-[
-  {
-    "box": [112.4, 530.0, 705.8, 1190.2],
-    "conf": 0.9612,
-    "cls": 21,
-    "label": "paragraph",
-    "name_local": "paragraph"
-  }
-]
+{
+  "image": "page_01",
+  "width": 1654,
+  "height": 2339,
+  "coordinate_system": "pixels, origin top-left, x to the right, y downwards",
+  "count": 1,
+  "detections": [
+    {
+      "id": 1,
+      "label": "paragraph",
+      "name_local": "paragraph",
+      "class_id": 21,
+      "confidence": 0.9612,
+      "bbox_xyxy": [112.4, 530.0, 705.8, 1190.2],
+      "bbox_xywh": [112.4, 530.0, 593.4, 660.2],
+      "bbox_normalized": [0.06796, 0.2266, 0.42674, 0.50886]
+    }
+  ]
+}
 ```
 
 | Field | Meaning |
 |---|---|
-| `box` | `[x1, y1, x2, y2]` in pixels of the original image |
-| `conf` | Confidence score in [0, 1] |
-| `cls` | Class index 0 to 41 |
+| `image`, `width`, `height` | Source file name (without extension) and its size in pixels |
+| `id` | Position in reading order, starting at 1; the same number shown on the page and in the cutout file name |
 | `label` | Class name in English |
 | `name_local` | Class name in the selected display language |
+| `class_id` | Class index 0 to 41 |
+| `confidence` | Confidence score in [0, 1] |
+| `bbox_xyxy` | `[x1, y1, x2, y2]`: left, top, right, bottom corners in pixels of the original image |
+| `bbox_xywh` | `[x, y, width, height]` of the same box, in pixels |
+| `bbox_normalized` | `bbox_xyxy` divided by the page size, so values lie in [0, 1] |
 
-The values shown are illustrative.
+The values shown are illustrative. The same coordinates are available in the app without opening the file: click a box,
+or open the **Coordinates of all boxes** table under the page.
 
 ### 6.3 Configurable parameters
 
@@ -947,6 +970,9 @@ To stop the app, press `Ctrl + C` in the terminal.
 3. Watch the scan, then each model's regions appear one by one with a live feed, stats and a progress bar.
 4. Scroll to **Results** for the comparison table, the per-class chart and the annotated page. Use the model tabs,
    and the **Download** buttons for a PNG or JSON export. Hover over a box to see its label and confidence.
+   **Click a box** to see its pixel coordinates and to be asked whether to download that region as a PNG cutout
+   (choose **Download cutout** to save it, **Copy coordinates** to copy them as JSON, or **Cancel**). The
+   **Coordinates of all boxes** table under the page lists every box.
 5. Change the language in the sidebar (**Region names**) to see the labels in Bengali.
    This updates the results instantly without re-running the models.
 

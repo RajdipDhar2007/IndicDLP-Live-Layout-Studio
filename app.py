@@ -245,10 +245,12 @@ def scan_html(image: Image.Image, caption: str) -> str:
     </div>"""
 
 
-def overlay_doc(image: Image.Image, dets: list[dict], lang: str) -> str:
+def overlay_doc(image: Image.Image, dets: list[dict], lang: str, stem: str = "document") -> str:
     """Self-contained HTML page (shown in an iframe): the document with colour-coded, localised region labels.
 
     Labels are real HTML text, so the browser shapes the Bengali script correctly and sizes each label to its text.
+    Clicking a box opens a small prompt that offers that region's cutout (cropped in the browser from the
+    full-resolution page, no server round-trip) and shows its pixel coordinates.
     """
     w, h = image.size
     dense = len(dets) > 30  # on busy pages paragraph labels are shown on hover only
@@ -259,8 +261,10 @@ def overlay_doc(image: Image.Image, dets: list[dict], lang: str) -> str:
         name = escape(tr(lang, d["label"]))
         quiet = " q" if dense and d["label"] == "paragraph" else ""
         edge = " in" if y1 / h < 0.025 else ""
+        data = escape(json.dumps(dict(i=i, label=d["label"], name=tr(lang, d["label"]), conf=round(d["conf"], 4),
+                                      box=[round(v, 1) for v in d["box"]]), ensure_ascii=False), quote=True)
         boxes.append(
-            f'<div class="b{quiet}" style="left:{x1 / w * 100:.3f}%;top:{y1 / h * 100:.3f}%;width:{(x2 - x1) / w * 100:.3f}%;'
+            f'<div class="b{quiet}" data-d="{data}" style="left:{x1 / w * 100:.3f}%;top:{y1 / h * 100:.3f}%;width:{(x2 - x1) / w * 100:.3f}%;'
             f'height:{(y2 - y1) / h * 100:.3f}%;--c:{col};animation-delay:{min(i * 10, 1200)}ms" title="#{i} {name} · {d["conf"] * 100:.0f}%">'
             f'<span class="l{edge}">{name}</span></div>')
     return f"""<!doctype html><html><head><meta charset="utf-8"><style>
@@ -276,8 +280,56 @@ html,body{{margin:0;background:transparent}}
  font-family:'Nirmala UI','Noto Sans','Noto Sans Bengali','Segoe UI',sans-serif}}
 .l.in{{bottom:auto;top:0;border-radius:0 0 3px 0}}
 .b.q .l{{display:none}}.b.q:hover .l{{display:block}}
+.b{{cursor:pointer}}.b.sel{{outline:2px dashed #fff;outline-offset:1px;z-index:6}}
+.pop{{position:absolute;z-index:20;display:none;width:min(92cqw,22em);box-sizing:border-box;
+ font:600 clamp(11px,1.5cqw,15px)/1.4 'Nirmala UI','Noto Sans','Noto Sans Bengali','Segoe UI',sans-serif;color:#e8eaff;
+ background:#12153aee;border:1px solid var(--c,#7cf3ff);border-radius:10px;padding:.7em .9em;box-shadow:0 8px 30px #000a}}
+.pop h4{{margin:0 0 .3em;font-size:1.05em;color:var(--c)}}
+.pop code{{display:block;background:#0a0b1a;border-radius:6px;padding:.35em .5em;margin:.3em 0;color:#7cf3ff;font:500 .95em Consolas,monospace;white-space:normal}}
+.pop q{{display:block;margin:.5em 0 .3em;quotes:none;color:#c4c8ee}}
+.pop button{{cursor:pointer;border:1px solid #3b82f6;background:#1e3a8a;color:#fff;border-radius:7px;padding:.3em .8em;
+ font:inherit;margin:.2em .3em 0 0}}
+.pop button.go{{background:#2563eb}}.pop button:hover{{filter:brightness(1.25)}}
 @keyframes in{{from{{opacity:0;transform:scale(.97)}}to{{opacity:1;transform:none}}}}
-</style></head><body><div class="wrap"><img src="data:image/jpeg;base64,{b64_jpeg(image, 85)}">{"".join(boxes)}</div></body></html>"""
+</style></head><body><div class="wrap"><img id="pg" src="data:image/jpeg;base64,{b64_jpeg(image, 85)}">{"".join(boxes)}
+<div class="pop" id="pop"><h4 id="pt"></h4><code id="pc"></code><q>Download this cutout as a PNG?</q>
+<button class="go" id="pdl">⬇ Download cutout</button><button id="pcp">Copy coordinates</button><button id="px">Cancel</button></div></div>
+<script>
+const STEM={json.dumps(stem)},wrap=document.querySelector('.wrap'),pop=document.getElementById('pop'),img=document.getElementById('pg');
+let cur=null,selEl=null;
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+function close(){{pop.style.display='none';if(selEl)selEl.classList.remove('sel');cur=selEl=null}}
+wrap.addEventListener('click',e=>{{
+  if(pop.contains(e.target))return;
+  const b=e.target.closest('.b');
+  if(!b){{close();return}}
+  if(selEl)selEl.classList.remove('sel');
+  selEl=b;b.classList.add('sel');cur=JSON.parse(b.dataset.d);
+  const [x1,y1,x2,y2]=cur.box.map(Math.round);
+  pop.style.setProperty('--c',getComputedStyle(b).getPropertyValue('--c'));
+  document.getElementById('pt').textContent='#'+cur.i+' · '+cur.name+' · '+Math.round(cur.conf*100)+'%';
+  document.getElementById('pc').textContent='x1='+x1+'  y1='+y1+'  x2='+x2+'  y2='+y2+'   ('+(x2-x1)+' × '+(y2-y1)+' px)';
+  pop.style.display='block';
+  const r=wrap.getBoundingClientRect();
+  pop.style.left=clamp(e.clientX-r.left+8,4,Math.max(4,r.width-pop.offsetWidth-4))+'px';
+  pop.style.top=clamp(e.clientY-r.top+8,4,Math.max(4,r.height-pop.offsetHeight-4))+'px';
+}});
+document.getElementById('px').onclick=close;
+document.getElementById('pcp').onclick=()=>{{
+  const t=JSON.stringify({{id:cur.i,label:cur.label,bbox_xyxy:cur.box,confidence:cur.conf}});
+  (navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).catch(()=>{{
+    const a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();document.execCommand('copy');a.remove()}});
+  const bt=document.getElementById('pcp');bt.textContent='Copied ✓';setTimeout(()=>bt.textContent='Copy coordinates',1500)}};
+document.getElementById('pdl').onclick=()=>{{
+  const sx=img.naturalWidth/{w},sy=img.naturalHeight/{h};
+  const x=Math.round(clamp(cur.box[0],0,{w})*sx),y=Math.round(clamp(cur.box[1],0,{h})*sy);
+  const cw=Math.max(1,Math.round(clamp(cur.box[2],0,{w})*sx)-x),ch=Math.max(1,Math.round(clamp(cur.box[3],0,{h})*sy)-y);
+  const c=document.createElement('canvas');c.width=cw;c.height=ch;
+  c.getContext('2d').drawImage(img,x,y,cw,ch,0,0,cw,ch);
+  const name=STEM+'_'+String(cur.i).padStart(2,'0')+'_'+cur.label+'.png';
+  c.toBlob(bl=>{{const a=document.createElement('a');a.href=URL.createObjectURL(bl);a.download=name;
+    document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),2000);close()}},'image/png')}};
+</script></body></html>"""
 
 def feed_html(dets: list[dict], shown: int, lang: str) -> str:
     rows = []
@@ -537,6 +589,28 @@ def title_of(key: str) -> str:
     return FUSION.title if key == "fusion" else MODELS[key].title
 
 
+def coord_rows(dets: list[dict], lang: str) -> list[dict]:
+    rows = []
+    for i, d in enumerate(dets, 1):
+        x1, y1, x2, y2 = [round(v) for v in d["box"]]
+        rows.append({"#": i, "Region": tr(lang, d["label"]), "Confidence": round(d["conf"], 3),
+                     "x1": x1, "y1": y1, "x2": x2, "y2": y2, "Width": x2 - x1, "Height": y2 - y1})
+    return rows
+
+
+def detections_json(dets: list[dict], size: tuple[int, int], lang: str, source: str) -> dict:
+    """Exported annotations. `bbox_xyxy` is [x1, y1, x2, y2] in pixels of the original page, origin top-left."""
+    w, h = size
+    out = []
+    for i, d in enumerate(dets, 1):
+        x1, y1, x2, y2 = [round(v, 1) for v in d["box"]]
+        out.append(dict(id=i, label=d["label"], name_local=tr(lang, d["label"]), class_id=d["cls"], confidence=round(d["conf"], 4),
+                        bbox_xyxy=[x1, y1, x2, y2], bbox_xywh=[x1, y1, round(x2 - x1, 1), round(y2 - y1, 1)],
+                        bbox_normalized=[round(x1 / w, 5), round(y1 / h, 5), round(x2 / w, 5), round(y2 / h, 5)]))
+    return dict(image=source, width=w, height=h, coordinate_system="pixels, origin top-left, x to the right, y downwards",
+                count=len(out), detections=out)
+
+
 def summary(image_name: str, lang: str) -> None:
     results = st.session_state.get("result")
     page = st.session_state.get("shown_img")
@@ -564,15 +638,17 @@ def summary(image_name: str, lang: str) -> None:
     for tab, key in zip(tabs, keys):
         r = results[key]
         with tab:
-            st.iframe(overlay_doc(page, r["dets"], lang), height="content")
+            st.caption("💡 Click any box to download its cutout or read its coordinates.")
+            st.iframe(overlay_doc(page, r["dets"], lang, f"{image_name}_{key}"), height="content")
             st.html(legend_html(lang, {d["label"] for d in r["dets"]}))
             buf = io.BytesIO()
             annotate_png(page, r["dets"]).save(buf, "PNG")
             c1, c2 = st.columns(2)
             c1.download_button("⬇ Annotated image (PNG)", buf.getvalue(), f"{image_name}_{key}.png", "image/png", key=f"dp_{key}")
-            payload = json.dumps([{**d, "name_local": tr(lang, d["label"]), "box": [round(v, 1) for v in d["box"]]}
-                                  for d in r["dets"]], indent=2, ensure_ascii=False)
+            payload = json.dumps(detections_json(r["dets"], page.size, lang, image_name), indent=2, ensure_ascii=False)
             c2.download_button("⬇ Detections (JSON)", payload, f"{image_name}_{key}.json", "application/json", key=f"dj_{key}")
+            with st.expander(f"📐 Coordinates of all {len(r['dets'])} boxes (pixels, top-left origin)"):
+                st.dataframe(coord_rows(r["dets"], lang), width="stretch", hide_index=True)
 
 
 # ----------------------------------------------------------------------------
