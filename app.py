@@ -28,7 +28,7 @@ from i18n import LANGS, label as tr
 ROOT = Path(__file__).resolve().parent
 WEIGHTS = ROOT / "weights"
 ZENODO = "https://zenodo.org/records/15881917/files/{}?download=1"
-DEFAULTS = dict(ocr_engine="gemini", conf=0.25, iou=0.70, imgsz=1024, speed="Normal", boost=True, fuse=True, lang="en")
+DEFAULTS = dict(ocr_on=True, ocr_engine="gemini", conf=0.25, iou=0.70, imgsz=1024, speed="Normal", boost=True, fuse=True, lang="en")
 
 st.set_page_config(page_title="IndicDLP Live Layout Studio", page_icon="📄", layout="wide")
 
@@ -629,9 +629,12 @@ def sidebar() -> dict:
         speed = st.select_slider("Reveal speed", ["Cinematic", "Normal", "Fast", "Instant"], key="speed")
         st.divider()
         st.markdown("##### 📝 Text extraction (OCR)")
-        st.selectbox("Engine", ["gemini", "easyocr"], key="ocr_engine",
-                     format_func=lambda k: {"gemini": "Gemini (cloud, most accurate)", "easyocr": "EasyOCR (local, offline)"}[k])
-        if st.session_state["ocr_engine"] == "gemini":
+        st.toggle("Enable OCR", key="ocr_on",
+                  help="Off: only the layout annotations are produced, no text is read and no Gemini requests are made.")
+        if st.session_state["ocr_on"]:
+            st.selectbox("Engine", ["gemini", "easyocr"], key="ocr_engine",
+                         format_func=lambda k: {"gemini": "Gemini (cloud, most accurate)", "easyocr": "EasyOCR (local, offline)"}[k])
+        if st.session_state["ocr_on"] and st.session_state["ocr_engine"] == "gemini":
             st.text_input("Gemini API key", type="password", key="gemini_key",
                           placeholder="or set GEMINI_API_KEY", help="Kept only in this browser session. Leave empty if GEMINI_API_KEY is set.")
             st.caption("Gemini sends each text region's image to Google. Use EasyOCR to stay offline.")
@@ -777,7 +780,8 @@ def summary(image_name: str, lang: str) -> None:
         r = results[key]
         with tab:
             engine = st.session_state.get("ocr_engine", "gemini")
-            if key == "fusion" and not r.get("auto_ocr"):  # Ensemble Fusion is read automatically, once
+            ocr_on = st.session_state.get("ocr_on", True)
+            if ocr_on and key == "fusion" and not r.get("auto_ocr"):  # Ensemble Fusion is read automatically, once
                 r["auto_ocr"] = True
                 use = engine if engine != "gemini" or gemini_key() else "easyocr"
                 with st.spinner(f"Reading text in the fused regions ({'Gemini' if use == 'gemini' else 'EasyOCR'})…"):
@@ -789,7 +793,7 @@ def summary(image_name: str, lang: str) -> None:
                             d.pop("text", None)
             has_text = any("text" in d for d in r["dets"])
             nice = "Gemini" if engine == "gemini" else "EasyOCR"
-            if st.button(f"📝 {'Re-run' if has_text else 'Extract text'} with {nice} (Bengali + English)", key=f"ocr_{key}"):
+            if ocr_on and st.button(f"📝 {'Re-run' if has_text else 'Extract text'} with {nice} (Bengali + English)", key=f"ocr_{key}"):
                 bar = st.progress(0.0, text=f"Starting {nice}…")
                 try:
                     ocr_page(page, r["dets"], device_name(), lambda p, t: bar.progress(p, text=t), engine)
@@ -800,7 +804,8 @@ def summary(image_name: str, lang: str) -> None:
                 bar.empty()
                 has_text = any("text" in d for d in r["dets"])
             st.caption("💡 Click any box to download its cutout, read its coordinates"
-                       + (" or copy its text." if has_text else ". Use the OCR button to read the text inside each box."))
+                       + (" or copy its text." if has_text else (". Use the OCR button to read the text inside each box."
+                                                             if ocr_on else ". OCR is switched off in the sidebar.")))
             st.iframe(overlay_doc(page, r["dets"], lang, f"{image_name}_{key}"), height="content")
             st.html(legend_html(lang, {d["label"] for d in r["dets"]}))
             buf = io.BytesIO()

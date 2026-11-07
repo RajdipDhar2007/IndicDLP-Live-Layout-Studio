@@ -880,7 +880,7 @@ To stop the app, press `Ctrl + C` in the terminal.
    **Coordinates of all boxes** table under the page lists every box.
 5. Change the language in the sidebar (**Region names**) to see the labels in Bengali.
    This updates the results instantly without re-running the models.
-6. Choose the OCR engine in the sidebar (Gemini needs an API key; EasyOCR works offline), then press **Extract text** above the page of any result tab to read the text inside every text region. After a
+6. OCR can be switched off with **Enable OCR** in the sidebar (annotations only, no Gemini requests). Otherwise choose the OCR engine in the sidebar (Gemini needs an API key; EasyOCR works offline), then press **Extract text** above the page of any result tab to read the text inside every text region. After a
    few seconds (the OCR models download on first use), clicking a box also shows its text with a **Copy text** button,
    the coordinate table gets a **Text** column, and the JSON and a plain-text file (**Extracted text (TXT)**) can be downloaded.
 
