@@ -21,14 +21,15 @@ and its fine-tuned detectors address this with 119,806 annotated pages and a
 how they draw the boxes and which data they used.*
 
 This work presents **IndicDLP Live Layout Studio**, a web application that makes those detectors usable and
-inspectable. It (i) runs three state-of-the-art detectors (YOLOv10x, DocLayout-YOLO and YOLO26) behind one unified
+inspectable. It (i) runs two state-of-the-art detectors (YOLOv10x and DocLayout-YOLO) behind one unified
 interface; (ii) adds a **multi-scale inference** stage and an **ensemble fusion** stage based on Weighted Boxes
 Fusion, which combine the outputs of several passes or several models into a single, more complete prediction;
 (iii) animates the detection process in real time so that the behaviour of each model can be observed region by
 region; and (iv) renders the 42 region classes in **English and Bengali**, with colour-coded, exportable results (annotated
-PNG, structured JSON and per-region cutouts that can be downloaded by clicking a box).
+PNG, structured JSON and per-region cutouts that can be downloaded by clicking a box), and (v) reads the text inside
+each region with **OCR** (Bengali and English), which can be copied from the box or exported as JSON and plain text.
 
-**Keywords:** document layout analysis, Bengali script, object detection, YOLOv10, DocLayout-YOLO, YOLO26,
+**Keywords:** document layout analysis, Bengali script, object detection, YOLOv10, DocLayout-YOLO, OCR,
 weighted boxes fusion, English and Bengali user interface, Streamlit.
 
 ---
@@ -69,7 +70,7 @@ Training works like teaching a child to spot headlines by showing thousands of m
 4. **Adjust.** An algorithm called gradient descent changes all the weights a tiny amount in the direction that makes
    the loss smaller.
 5. **Repeat.** Steps 2 to 4 run on thousands of pages, over and over. One full pass over all training pages is an
-   **epoch**. YOLO26x was trained for 40 epochs.
+   **epoch**.
 6. **Check on pages it has never seen.** After each epoch the model is tested on separate *validation pages* that were
    not used for learning. This shows whether it really learned the layout rules or just memorised the training pages.
    The best-scoring version is saved and used by the app.
@@ -98,14 +99,14 @@ On an uploaded page, the model works in one pass, in these steps:
    A single page therefore produces thousands of candidate boxes, most of them with very low scores.
 4. **Pick the winners.** Several neighbouring squares often propose almost the same box. Older detectors remove the
    duplicates with a step called **non-maximum suppression** (NMS): keep the highest-scoring box and delete any other
-   box that overlaps it too much. The newer models used here (YOLOv10 and YOLO26) are trained so that only one box
+   box that overlaps it too much. The newer models used here (YOLOv10-based) are trained so that only one box
    per region ends up with a high score, so they need no NMS at all.
 5. **Keep the confident ones.** Each remaining box has a **confidence** from 0 to 1. Boxes below the confidence
    threshold (0.25 in the app) are thrown away.
 6. **Output.** What is left is the final answer: for each region, the rectangle `(x1, y1, x2, y2)` in pixels, its
    label, and its confidence. The app draws these on the page and can export them as an image and a JSON file.
 
-The three models are all members of the **YOLO** family ("You Only Look Once"), named for the fact that they find all
+The two models are both members of the **YOLO** family ("You Only Look Once"), named for the fact that they find all
 boxes in one look at the page instead of searching region by region.
 
 ### What data was used?
@@ -123,15 +124,9 @@ data:
 |---|---|---|
 | YOLOv10x | UED-mini, a pretraining set of about 75,000 human-annotated pages curated from the DocLayNet and M6Doc layout datasets, with 25 labels (as described in the IndicDLP paper) | The IndicDLP training pages, by the dataset's authors |
 | DocLayout-YOLO | DocSynth-300K, a collection of synthetic (computer-generated) layout pages (as stated in the IndicDLP paper) | The IndicDLP training pages, by the dataset's authors |
-| YOLO26x | COCO, a standard collection of everyday photographs (people, cars, animals) with 80 object types, which is what the official `yolo26x.pt` starts from | **Trained in this project** on 12,345 IndicDLP pages |
 
-The YOLOv10x and DocLayout-YOLO files are released checkpoints; this project downloads and uses them as they are, and
-the details above come from the checkpoint providers, not from re-training. **YOLO26x is the only model trained
-here.** The IndicDLP files for it were downloaded in numbered pieces (shards). Only every eighth training shard was
-used (21 of 163, about 13% of the training pages = 12,345 pages), and 6 of 23 validation shards (3,127 pages). The
-training pages were not selected by language, because the data files have no language field. This much smaller
-training set, plus the pretraining difference, is the main reason YOLO26x scores lower than the other two (see
-[Section 7](#7-experiments-and-results)).
+The YOLOv10x and DocLayout-YOLO files are released checkpoints; this project downloads and uses them as they are,
+and the details above come from the checkpoint providers, not from re-training.
 
 ### How is "how good" measured?
 
@@ -145,13 +140,15 @@ training set, plus the pretraining difference, is the main reason YOLO26x scores
 
 ### What does the app add on top of the models?
 
-- **Three models in one place**, which can be switched on and off and compared.
+- **Two models in one place**, which can be switched on and off and compared.
 - **Multi-scale boost.** The same page is run through a model at two sizes and the two answers are merged, which
   finds small or faint regions more often.
 - **Ensemble fusion.** The answers of several models are merged into one, using a method called Weighted Boxes Fusion
   (overlapping boxes of the same label are averaged, weighted by confidence).
 - **Click a box for its cutout and coordinates.** On the results page, clicking any box asks whether to download that
   region as its own image (a cutout), and shows the box's pixel coordinates.
+- **Text extraction (OCR).** One button reads the text inside every text region (Bengali and English). The text appears
+  in the click prompt of each box, in the coordinate table, in the JSON export and in a plain-text download.
 - **Live reveal and bilingual labels.** The boxes appear one by one, and the label names can be switched between
   English and Bengali without running the model again.
 
@@ -208,7 +205,7 @@ and figure extraction, accessibility tagging, search indexing) depend.
 
 ### 1.3 Contributions
 
-1. A **single web interface** over three detectors (YOLOv10x, DocLayout-YOLO and YOLO26) with automatic
+1. A **single web interface** over two detectors (YOLOv10x and DocLayout-YOLO) with automatic
    detection of which models are installed and available.
 2. A **multi-scale inference** stage that fuses predictions from two input resolutions per model to recover small
    and faint regions.
@@ -221,13 +218,16 @@ and figure extraction, accessibility tagging, search indexing) depend.
    and per-class statistics.
 7. **Click-to-cutout and coordinate inspection.** Clicking a box on the results page offers a PNG cutout of exactly
    that region and shows its `x1, y1, x2, y2` pixel coordinates; the same numbers are listed in a table and in the JSON export.
+8. **OCR of detected regions.** EasyOCR (Bengali and English) reads each text-bearing region (figures, tables, formulas,
+   advertisements, flags and placeholder text are skipped). The text is shown and copyable in the click prompt, added to
+   the coordinate table and the JSON export, and downloadable as a plain-text file.
 
 ---
 
 ## 2. Background and related work
 
 **IndicDLP.** A foundational dataset for multi-lingual and multi-domain layout parsing, with detectors fine-tuned
-on it. This project uses the released YOLOv10x and DocLayout-YOLO checkpoints unchanged and adds its own YOLO26x.
+on it. This project uses the released YOLOv10x and DocLayout-YOLO checkpoints unchanged.
 
 **YOLOv10.** A real-time, single-stage object detector that removes the need for non-maximum suppression at
 inference by using consistent dual assignments during training (Wang et al., NeurIPS 2024). In this project the
@@ -246,9 +246,9 @@ multi-model fusion.
 A beginner-friendly version of this subsection is in the [Overview](#overview-how-the-system-works).
 The version below is more technical.
 
-All three models are **single-stage object detectors**: one forward pass over the page produces every box and its
+Both models are **single-stage object detectors**: one forward pass over the page produces every box and its
 class, with no separate region-proposal step. The description below is the general YOLO-family design; the exact
-layers differ between YOLOv10x, DocLayout-YOLO and YOLO26x.
+layers differ between YOLOv10x and DocLayout-YOLO.
 
 ```mermaid
 flowchart LR
@@ -271,31 +271,29 @@ flowchart LR
 4. **Head.** At every cell of every map the head predicts, in the same pass, the box (its four edges, measured
    from the cell) and a score for each of the 42 classes. A page therefore produces thousands of candidate boxes.
 5. **Choosing the final boxes.** Classic YOLO keeps the best candidate by *non-maximum suppression* (NMS): the
-   highest-scoring box is kept and any box overlapping it by more than the IoU threshold is removed. YOLOv10 and
-   YOLO26 are trained to give **one prediction per object**, so this step is not needed at inference
+   highest-scoring box is kept and any box overlapping it by more than the IoU threshold is removed. YOLOv10 is trained to give **one prediction per object**, so this step is not needed at inference
    ("NMS-free"). Finally, boxes whose best class score is below the **confidence threshold** are dropped.
 6. **Output.** Each remaining box is a rectangle `(x1, y1, x2, y2)`, a class (one of the 42) and a score. These are
    the records the app shows and exports.
 
 **Training, step by step**
 
-1. **Ground truth.** Every training page has human-drawn rectangles with a class id. `yolo26/prepare_data.py`
-   converts them to the YOLO format: class, centre and size, all relative to the page.
+1. **Ground truth.** Every training page has human-drawn rectangles with a class id. They are
+   converted to the YOLO format: class, centre and size, all relative to the page.
 2. **Matching.** Each ground-truth box has to be assigned to the candidate predictions that should learn it.
    Ultralytics uses a *task-aligned assigner*: candidates whose cell lies inside the box and whose predicted box
    overlaps it well and whose class score is high get the box as their target; all other candidates are trained to
-   predict "background". YOLOv10 and YOLO26 additionally train a second, one-to-one head so that only the single
+   predict "background". YOLOv10 additionally trains a second, one-to-one head so that only the single
    best candidate per object survives at inference, which is what removes NMS.
 3. **Loss.** The error to minimise combines a **box loss** (how much the predicted box overlaps the ground truth,
-   an IoU-based measure, plus a small direct coordinate term in YOLO26) and a **classification loss** (the
-   predicted 42 scores against the true class). YOLOv10x also uses a distribution-based box term; YOLO26 predicts the
-   box edges directly instead.
+   an IoU-based measure) and a **classification loss** (the
+   predicted 42 scores against the true class). YOLOv10x also uses a distribution-based box term.
 4. **Optimisation.** Pages are fed in batches with augmentation (mosaic of four pages, random scale, colour
    jitter; flips and rotation are switched off here because text must not be mirrored). Gradient descent updates all
    weights, the learning rate follows a cosine decay, and after every epoch the model is scored on the validation
    pages (mAP). The checkpoint with the best score is kept.
-5. **Fine-tuning.** The models start from pretrained weights instead of random ones. YOLOv10x was pretrained on a
-   UED-mini layout pages, and YOLO26x on COCO photographs; both are then trained on the IndicDLP pages so
+5. **Fine-tuning.** The models start from pretrained weights instead of random ones. YOLOv10x was pretrained on
+   UED-mini layout pages, and DocLayout-YOLO on synthetic layout pages; both are then trained on the IndicDLP pages so
    the final layer outputs the 42 layout classes.
 
 **What is specific to document layout.** Regions are large, rectangular, tightly packed and strongly tied to their
@@ -345,9 +343,6 @@ pie showData title Domain share of IndicDLP pages (%)
 | Item | Used here |
 |---|---|
 | YOLOv10x and DocLayout-YOLO | Released checkpoints, fine-tuned by their authors on IndicDLP; not re-trained here |
-| YOLO26x training pages | 12,345 pages = 21 of 163 training shards (every eighth), about 13% of the training split |
-| YOLO26x validation pages | 3,127 pages = 6 of 23 validation shards |
-| Conversion | `yolo26/prepare_data.py` turns each page and its boxes into the YOLO text format (class, centre x, centre y, width, height, all relative to the page) |
 | Language selection | None: the data files have no language field, so pages in all languages were used |
 
 Sample pages are shown in [Section 3.2](#32-sample-annotated-pages-from-the-dataset).
@@ -429,7 +424,6 @@ flowchart TB
     subgraph MODELS["Detectors (IndicDLP checkpoints)"]
         M1["YOLOv10x<br/>Ultralytics"]
         M2["DocLayout-YOLO"]
-        M3["YOLO26<br/>Ultralytics"]
     end
 
     subgraph OUT["Output layer"]
@@ -445,10 +439,8 @@ flowchart TB
     R --> L
     L --> M1
     L --> M2
-    L --> M3
     M1 --> P
     M2 --> P
-    M3 --> P
     P --> MS --> F1 --> RO --> U3
     RO --> F2 --> RO
     U3 --> U4
@@ -629,6 +621,7 @@ For every model, and for the ensemble, the system produces:
 | `bbox_xyxy` | `[x1, y1, x2, y2]`: left, top, right, bottom corners in pixels of the original image |
 | `bbox_xywh` | `[x, y, width, height]` of the same box, in pixels |
 | `bbox_normalized` | `bbox_xyxy` divided by the page size, so values lie in [0, 1] |
+| `text` | Text read by OCR (Bengali and English); present only after **Extract text (OCR)** has been used, empty for figures, tables and similar regions |
 
 The values shown are illustrative. The same coordinates are available in the app without opening the file: click a box,
 or open the **Coordinates of all boxes** table under the page.
@@ -637,7 +630,7 @@ or open the **Coordinates of all boxes** table under the page.
 
 | Parameter | Role | Range | Default |
 |---|---|---|---|
-| Models | Which detectors run | YOLOv10x, DocLayout-YOLO, YOLO26x | All whose weights are present |
+| Models | Which detectors run | YOLOv10x, DocLayout-YOLO | All whose weights are present |
 | Multi-scale boost | Second inference size, fused with the first | On / Off | On |
 | Ensemble fusion | Fuse all models into one result | On / Off | On |
 | Confidence threshold | Minimum score kept | 0.05 to 0.95, step 0.05 | 0.25 |
@@ -662,7 +655,6 @@ Accuracy is the COCO-style mAP averaged over IoU 0.50 to 0.95 (mAP[50:95]).
 |---|---|---|---|
 | YOLOv10x | 57.7 | IndicDLP paper [4], Table 6 | Published; the model pretrained on UED-mini, then fine-tuned on IndicDLP |
 | DocLayout-YOLO | 54.5 | IndicDLP paper [4], Table 4 | Published; fine-tuned on IndicDLP |
-| YOLO26x | 43.4 | This project | Measured with `yolo26/evaluate.py` on 3,127 validation pages at 1024 px |
 
 Notes on reading the table:
 
@@ -670,104 +662,17 @@ Notes on reading the table:
   whether they were computed on the validation or the test split.
 - For comparison, the paper reports 55.0 for YOLOv10x without UED-mini pretraining (Table 4), so the pretraining adds
   about two to three points.
-- The YOLO26x figure comes from a subset of the validation split and a different training set size, so it is not a
-  like-for-like comparison with the published figures.
 
 ```mermaid
 xychart-beta
     title "mAP[50:95] on IndicDLP (higher is better)"
-    x-axis ["YOLOv10x", "DocLayout-YOLO", "YOLO26x"]
+    x-axis ["YOLOv10x", "DocLayout-YOLO"]
     y-axis "mAP[50:95]" 40 --> 60
-    bar [57.7, 54.5, 43.4]
+    bar [57.7, 54.5]
 ```
 
 The ensemble stage has no published benchmark figure. Its effect can be inspected per page through the comparison
 table in the app (regions found, classes found, average confidence, time).
-
-<a id="yolo26-training"></a>
-#### YOLO26 training
-
-YOLO26x is fine-tuned on the 12,345 training pages with `yolo26/train.py` (data from `yolo26/prepare_data.py`,
-scored with `yolo26/evaluate.py`). Settings: COCO-pretrained `yolo26x.pt`, 1024 px, batch 2, 40 epochs, cosine
-learning rate, no flips or rotation, mosaic closed for the last 8 epochs.
-
-| Metric | Value |
-|---|---|
-| mAP[50:95] | 43.4 |
-| mAP50 | 61.2 |
-| Precision | 64.5 |
-| Recall | 59.5 |
-
-**Why YOLO26x scores lower than YOLOv10x.** The reasons below are listed in the order they are expected to matter.
-They have not been separated by experiments here.
-
-- **Less training data.** YOLO26x saw only about 13% of IndicDLP's training pages (every eighth shard: 21 of 163, which
-  is 12,345 pages). The published checkpoints were presumably fine-tuned on the full training split (not verified here).
-- **Different pretraining.** YOLOv10x was first pretrained on UED-mini layout pages. YOLO26x started from COCO
-  photographs only.
-- **Rare classes.** About half of the 42 classes have under 1,000 training boxes in this subset, and they score lowest.
-- **Small batch.** A batch of 2 is a weak training recipe compared with the larger batches typical for this model size.
-
-**Per-class scores for YOLO26x (mAP[50:95]).**
-
-- Strongest: table 82, paragraph 82, figure 74, headline 71, unordered-list 67.
-- Weakest: subsub-headline 3, subsub-section-title 7, answer 13, quote 13, sub-unordered-list 16,
-  sub-section-title 18.
-
-**Where the trained checkpoint is.** The checkpoint (118 MB) is larger than GitHub's 100 MB file limit and is
-therefore not in the repository. The app works without it, using the other two models. To obtain it, YOLO26x has to be
-trained again, as described next.
-
-#### How to train YOLO26x
-
-**1. Get the data.** The dataset is [`ai4bharat/indicdlp`](https://huggingface.co/datasets/ai4bharat/indicdlp) on
-Hugging Face, stored as Parquet files named `train-NNNNN-of-00163` and `validation-NNNNN-of-00023` inside a `data/`
-folder. The paper and project page are linked in [References](#11-references). The download tool is installed with the
-project requirements (`huggingface_hub`).
-
-```bash
-# Option A: the whole dataset (very large: it is made of page images)
-hf download ai4bharat/indicdlp --repo-type dataset --local-dir indicdlp_raw
-
-# Option B: the subset used for the reported result (every eighth training shard, six validation shards)
-for i in $(seq 0 8 160); do
-  hf download ai4bharat/indicdlp --repo-type dataset --local-dir indicdlp_raw \
-     --include "data/train-$(printf '%05d' $i)-of-00163*"
-done
-for i in 00000 00005 00010 00014 00018 00022; do
-  hf download ai4bharat/indicdlp --repo-type dataset --local-dir indicdlp_raw \
-     --include "data/validation-$i-of-00023*"
-done
-```
-
-**2. Convert it to YOLO format.** `prepare_data.py` reads the Parquet files and writes one image and one text label file
-per page (class, centre x, centre y, width, height, all relative to the page), plus the `indicdlp.yaml` that points to
-them.
-
-```bash
-python yolo26/prepare_data.py --raw indicdlp_raw/data --out indicdlp_yolo
-```
-
-**3. Train.** `train.py` downloads the COCO-pretrained `yolo26x.pt` automatically on the first run.
-
-```bash
-python yolo26/train.py --data indicdlp_yolo/indicdlp.yaml --model yolo26x.pt --epochs 40 --batch 2 --close-mosaic 8
-```
-
-- Settings used: 1024 px images, 40 epochs, cosine learning rate, no flips or rotation, mosaic closed for the last
-  8 epochs.
-- Training on the subset took about 20 hours; using every shard would take roughly eight times longer.
-- The best checkpoint is copied to `weights/yolo26_indicdlp.pt`, the file the app loads.
-- An interrupted run continues with
-  `python yolo26/train.py --resume --name yolo26_indicdlp --data indicdlp_yolo/indicdlp.yaml`.
-
-**4. Measure it.**
-
-```bash
-python yolo26/evaluate.py --data indicdlp_yolo/indicdlp.yaml
-```
-
-This prints mAP[50:95], mAP50, precision and recall on the validation pages.
 
 ### 7.2 Demonstration: input and output
 
@@ -811,11 +716,11 @@ What the output shows:
 
 Both pages are old, low-contrast scans with stains and torn edges. The large, distinctive regions (photographs,
 advertisements, headlines, body columns) receive high confidence, while small page furniture and headline levels receive
-low confidence and are the least reliable, as the per-class scores in Section 7.1 also show.
+low confidence and are the least reliable.
 
 ### 7.3 Discussion
 
-The per-class scores above show the same pattern for YOLO26x: large, visually distinctive regions (table, paragraph,
+Detectors of this kind show a consistent pattern: large, visually distinctive regions (table, paragraph,
 figure, headline) score high, while hierarchy-dependent classes (headline levels, list levels, question levels) and
 rare classes score low. This is the trade-off that the *Multi-scale boost* and *Ensemble fusion* options are meant to
 address, and the app lets the user observe it directly by toggling them and comparing the result tabs.
@@ -828,7 +733,7 @@ address, and the app lets the user observe it directly by toggling them and comp
 
 This section is the fastest route to a working demo.
 
-1. **What to expect.** A web app that detects layout regions on a document page with up to three models, fuses
+1. **What to expect.** A web app that detects layout regions on a document page with up to two models, fuses
    their outputs, and shows labels in English and Bengali. It runs in a browser at `http://localhost:8501`.
 2. **Minimum setup (about 10 minutes plus downloads).** Follow the Quick start below. Only YOLOv10x and
    DocLayout-YOLO are needed; they run on a normal laptop, with or without a GPU.
@@ -931,7 +836,6 @@ The weight files live in the `weights/` folder. They are large, so they are **no
 |---|---|---|
 | `md2_PT_indicdlp_FT.pt` | YOLOv10x | 64 MB |
 | `doclayout_yolo_indicdlp.pt` | DocLayout-YOLO | 161 MB |
-| `yolo26_indicdlp.pt` | YOLO26x (trained with `yolo26/train.py`, see [YOLO26 training](#yolo26-training)) | 118 MB |
 
 **Easiest way:** skip this step. When the app starts (step 7), any missing model shows a
 **⬇ Download weights** button in the sidebar.
@@ -975,6 +879,9 @@ To stop the app, press `Ctrl + C` in the terminal.
    **Coordinates of all boxes** table under the page lists every box.
 5. Change the language in the sidebar (**Region names**) to see the labels in Bengali.
    This updates the results instantly without re-running the models.
+6. Press **Extract text (OCR)** above the page of any result tab to read the text inside every text region. After a
+   few seconds (the OCR models download on first use), clicking a box also shows its text with a **Copy text** button,
+   the coordinate table gets a **Text** column, and the JSON and a plain-text file (**Extracted text (TXT)**) can be downloaded.
 
 ### Step 9: Sidebar settings
 
@@ -1010,7 +917,7 @@ To stop the app, press `Ctrl + C` in the terminal.
 |---|---|---|---|
 | YOLOv10x | `ultralytics` + PyTorch | Windows, Linux, macOS; GPU or CPU | Steps 4 to 6 (weights: `md2_PT_indicdlp_FT.pt`) |
 | DocLayout-YOLO | `doclayout-yolo` + PyTorch | Windows, Linux, macOS; GPU or CPU | Steps 4 to 6 (weights: `doclayout_yolo_indicdlp.pt`) |
-| YOLO26 | `ultralytics>=8.4` + PyTorch | Windows, Linux, macOS; GPU or CPU | Train with `yolo26/train.py` (weights: `yolo26_indicdlp.pt`) |
+| OCR (EasyOCR) | `easyocr` + PyTorch | Windows, Linux, macOS; GPU or CPU | Installed with the requirements; its Bengali and English models download automatically the first time OCR is used |
 
 All models share one environment (steps 3 to 5).
 
@@ -1024,7 +931,7 @@ All models share one environment (steps 3 to 5).
   approximated.
 - **Heuristic reading order.** The ordering sorts by position in bands. It can mis-order complex layouts such as
   multi-column pages with spanning headlines or wrapped figures.
-- **Limited training.** YOLOv10x and DocLayout-YOLO use the published checkpoints; only YOLO26x was trained here, and it is the weakest of the three. The
+- **Limited training.** YOLOv10x and DocLayout-YOLO use the published checkpoints; no model was trained here. The
   contribution of multi-scale and ensemble fusion has not been benchmarked on the full test set.
 - **Hierarchical classes.** Distinguishing headline levels, list levels and question levels depends on subtle size
   cues and gives the lowest per-class scores.
@@ -1036,7 +943,7 @@ All models share one environment (steps 3 to 5).
 - Quantitative evaluation of multi-scale and ensemble fusion on the IndicDLP test split, with per-class AP.
 - Tuned per-model fusion weights instead of equal weighting.
 - Multi-page PDF input and batch processing.
-- A learned reading-order model and hand-off of detected regions to OCR for Bengali.
+- A learned reading-order model and OCR with a Bengali-specialised engine and reading-order-aware assembly of the extracted text.
 - Additional export formats (COCO JSON, PAGE-XML, HTML).
 
 ---
@@ -1050,7 +957,6 @@ All models share one environment (steps 3 to 5).
 | `requirements.txt` | Python dependencies for the app |
 | `weights/` | Model checkpoints (downloaded separately, not in git) |
 | `docs/images/` | Sample annotated dataset pages and the class-count table shown in Section 3 |
-| `yolo26/` | Scripts to prepare the data, train and evaluate YOLO26 |
 
 ---
 
@@ -1073,5 +979,3 @@ All models share one environment (steps 3 to 5).
    Multi-Domain Document Layout Parsing.* arXiv:2512.20236, 2025.
    [arXiv](https://arxiv.org/abs/2512.20236), [project page](https://indicdlp.github.io/),
    [dataset](https://huggingface.co/datasets/ai4bharat/indicdlp).
-5. T.-Y. Lin, M. Maire, S. Belongie, et al. *Microsoft COCO: Common Objects in Context.* ECCV 2014 (the photograph
-   collection used to pretrain YOLO26x).

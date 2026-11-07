@@ -51,8 +51,6 @@ MODELS = {
                           "md2_PT_indicdlp_FT.pt", "yolo", "57.7", "⚡", 64280114),
     "doclayout": ModelSpec("doclayout", "DocLayout-YOLO", "Document-specialised YOLOv10 variant with global-to-local perception.",
                            "doclayout_yolo_indicdlp.pt", "doclayout", "54.5", "🧭", 161475350),
-    "yolo26": ModelSpec("yolo26", "YOLO26", "Latest Ultralytics YOLO (extra-large size), NMS-free, fine-tuned on IndicDLP's 42 layout classes (train it with yolo26/train.py).",
-                        "yolo26_indicdlp.pt", "yolo", "43.4", "🚀", 1),
 }
 FUSION = ModelSpec("fusion", "Ensemble Fusion", "All models voting together: boxes from every model merged with weighted box fusion.",
                    "", "fusion", "-", "🧬", 0)
@@ -137,6 +135,37 @@ def load_model(key: str, device: str):
         return YOLO(path)
     from doclayout_yolo import YOLOv10
     return YOLOv10(path)
+
+
+# Regions that hold no running text; OCR skips them.
+NON_TEXT = {"figure", "table", "formula", "advertisement", "flag", "placeholder-text"}
+
+
+@st.cache_resource(show_spinner=False)
+def load_ocr(device: str):
+    import easyocr
+    return easyocr.Reader(["bn", "en"], gpu=device != "cpu", verbose=False)  # Bengali + English
+
+
+def ocr_page(page: Image.Image, dets: list[dict], device: str, progress=None) -> None:
+    """Reads the text of every text-bearing region and stores it in det["text"] ('' for non-text regions)."""
+    import numpy as np
+    reader = load_ocr(device)
+    w, h = page.size
+    todo = [d for d in dets if d["label"] not in NON_TEXT]
+    for d in dets:
+        d["text"] = ""
+    for n, d in enumerate(todo, 1):
+        x1, y1, x2, y2 = d["box"]
+        pad = 4
+        crop = page.crop((max(0, int(x1) - pad), max(0, int(y1) - pad), min(w, int(x2) + pad), min(h, int(y2) + pad)))
+        try:
+            lines = reader.readtext(np.array(crop), detail=0, paragraph=True)
+        except Exception:
+            lines = []
+        d["text"] = "\n".join(t.strip() for t in lines if t.strip())
+        if progress:
+            progress(n / len(todo), f"OCR {n}/{len(todo)}")
 
 
 def predict_once(key: str, image: Image.Image, conf: float, iou: float, imgsz: int, device: str) -> list[dict]:
@@ -261,7 +290,7 @@ def overlay_doc(image: Image.Image, dets: list[dict], lang: str, stem: str = "do
         name = escape(tr(lang, d["label"]))
         quiet = " q" if dense and d["label"] == "paragraph" else ""
         edge = " in" if y1 / h < 0.025 else ""
-        data = escape(json.dumps(dict(i=i, label=d["label"], name=tr(lang, d["label"]), conf=round(d["conf"], 4),
+        data = escape(json.dumps(dict(i=i, label=d["label"], name=tr(lang, d["label"]), conf=round(d["conf"], 4), text=d.get("text", ""),
                                       box=[round(v, 1) for v in d["box"]]), ensure_ascii=False), quote=True)
         boxes.append(
             f'<div class="b{quiet}" data-d="{data}" style="left:{x1 / w * 100:.3f}%;top:{y1 / h * 100:.3f}%;width:{(x2 - x1) / w * 100:.3f}%;'
@@ -286,14 +315,16 @@ html,body{{margin:0;background:transparent}}
  background:#12153aee;border:1px solid var(--c,#7cf3ff);border-radius:10px;padding:.7em .9em;box-shadow:0 8px 30px #000a}}
 .pop h4{{margin:0 0 .3em;font-size:1.05em;color:var(--c)}}
 .pop code{{display:block;background:#0a0b1a;border-radius:6px;padding:.35em .5em;margin:.3em 0;color:#7cf3ff;font:500 .95em Consolas,monospace;white-space:normal}}
+.pop pre{{margin:.4em 0;max-height:9em;overflow:auto;white-space:pre-wrap;background:#0a0b1a;border-radius:6px;
+ padding:.4em .55em;color:#e8eaff;font:500 1em 'Nirmala UI','Noto Sans','Noto Sans Bengali','Segoe UI',sans-serif}}
 .pop q{{display:block;margin:.5em 0 .3em;quotes:none;color:#c4c8ee}}
 .pop button{{cursor:pointer;border:1px solid #3b82f6;background:#1e3a8a;color:#fff;border-radius:7px;padding:.3em .8em;
  font:inherit;margin:.2em .3em 0 0}}
 .pop button.go{{background:#2563eb}}.pop button:hover{{filter:brightness(1.25)}}
 @keyframes in{{from{{opacity:0;transform:scale(.97)}}to{{opacity:1;transform:none}}}}
 </style></head><body><div class="wrap"><img id="pg" src="data:image/jpeg;base64,{b64_jpeg(image, 85)}">{"".join(boxes)}
-<div class="pop" id="pop"><h4 id="pt"></h4><code id="pc"></code><q>Download this cutout as a PNG?</q>
-<button class="go" id="pdl">⬇ Download cutout</button><button id="pcp">Copy coordinates</button><button id="px">Cancel</button></div></div>
+<div class="pop" id="pop"><h4 id="pt"></h4><code id="pc"></code><pre id="ptx" style="display:none"></pre><q>Download this cutout as a PNG?</q>
+<button class="go" id="pdl">⬇ Download cutout</button><button id="pcp">Copy coordinates</button><button id="pct" style="display:none">Copy text</button><button id="px">Cancel</button></div></div>
 <script>
 const STEM={json.dumps(stem)},wrap=document.querySelector('.wrap'),pop=document.getElementById('pop'),img=document.getElementById('pg');
 let cur=null,selEl=null;
@@ -309,6 +340,8 @@ wrap.addEventListener('click',e=>{{
   pop.style.setProperty('--c',getComputedStyle(b).getPropertyValue('--c'));
   document.getElementById('pt').textContent='#'+cur.i+' · '+cur.name+' · '+Math.round(cur.conf*100)+'%';
   document.getElementById('pc').textContent='x1='+x1+'  y1='+y1+'  x2='+x2+'  y2='+y2+'   ('+(x2-x1)+' × '+(y2-y1)+' px)';
+  const tx=document.getElementById('ptx'),ct=document.getElementById('pct');
+  tx.textContent=cur.text||'';tx.style.display=cur.text?'block':'none';ct.style.display=cur.text?'inline-block':'none';
   pop.style.display='block';
   const r=wrap.getBoundingClientRect();
   pop.style.left=clamp(e.clientX-r.left+8,4,Math.max(4,r.width-pop.offsetWidth-4))+'px';
@@ -320,6 +353,11 @@ document.getElementById('pcp').onclick=()=>{{
   (navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).catch(()=>{{
     const a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();document.execCommand('copy');a.remove()}});
   const bt=document.getElementById('pcp');bt.textContent='Copied ✓';setTimeout(()=>bt.textContent='Copy coordinates',1500)}};
+document.getElementById('pct').onclick=()=>{{
+  const t=cur.text;
+  (navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).catch(()=>{{
+    const a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();document.execCommand('copy');a.remove()}});
+  const bt=document.getElementById('pct');bt.textContent='Copied ✓';setTimeout(()=>bt.textContent='Copy text',1500)}};
 document.getElementById('pdl').onclick=()=>{{
   const sx=img.naturalWidth/{w},sy=img.naturalHeight/{h};
   const x=Math.round(clamp(cur.box[0],0,{w})*sx),y=Math.round(clamp(cur.box[1],0,{h})*sy);
@@ -477,9 +515,7 @@ def sidebar() -> dict:
             on = st.toggle(label, value=ok, key=f"use_{key}", help=why or spec.blurb)
             if on and ok:
                 chosen.append(key)
-            if not ok and key == "yolo26":
-                st.caption(f"⚠️ {why} Train it with `yolo26/train.py`.")
-            elif not ok:
+            if not ok:
                 if st.button(f"⬇ Download {spec.title} weights", key=f"dl_{key}"):
                     download_weights(spec)
                     st.session_state["_enable_after_download"] = key  # applied before the toggle is drawn on the rerun
@@ -594,7 +630,7 @@ def coord_rows(dets: list[dict], lang: str) -> list[dict]:
     for i, d in enumerate(dets, 1):
         x1, y1, x2, y2 = [round(v) for v in d["box"]]
         rows.append({"#": i, "Region": tr(lang, d["label"]), "Confidence": round(d["conf"], 3),
-                     "x1": x1, "y1": y1, "x2": x2, "y2": y2, "Width": x2 - x1, "Height": y2 - y1})
+                     "x1": x1, "y1": y1, "x2": x2, "y2": y2, "Width": x2 - x1, "Height": y2 - y1, **({"Text": d.get("text", "")} if "text" in d else {})})
     return rows
 
 
@@ -606,7 +642,8 @@ def detections_json(dets: list[dict], size: tuple[int, int], lang: str, source: 
         x1, y1, x2, y2 = [round(v, 1) for v in d["box"]]
         out.append(dict(id=i, label=d["label"], name_local=tr(lang, d["label"]), class_id=d["cls"], confidence=round(d["conf"], 4),
                         bbox_xyxy=[x1, y1, x2, y2], bbox_xywh=[x1, y1, round(x2 - x1, 1), round(y2 - y1, 1)],
-                        bbox_normalized=[round(x1 / w, 5), round(y1 / h, 5), round(x2 / w, 5), round(y2 / h, 5)]))
+                        bbox_normalized=[round(x1 / w, 5), round(y1 / h, 5), round(x2 / w, 5), round(y2 / h, 5)],
+                        **({"text": d["text"]} if "text" in d else {})))
     return dict(image=source, width=w, height=h, coordinate_system="pixels, origin top-left, x to the right, y downwards",
                 count=len(out), detections=out)
 
@@ -638,13 +675,26 @@ def summary(image_name: str, lang: str) -> None:
     for tab, key in zip(tabs, keys):
         r = results[key]
         with tab:
-            st.caption("💡 Click any box to download its cutout or read its coordinates.")
+            has_text = any("text" in d for d in r["dets"])
+            if not has_text and st.button("📝 Extract text (OCR, Bengali + English)", key=f"ocr_{key}"):
+                bar = st.progress(0.0, text="Loading OCR model…")
+                try:
+                    ocr_page(page, r["dets"], device_name(), lambda p, t: bar.progress(p, text=t))
+                except ImportError:
+                    st.error("OCR needs EasyOCR: pip install easyocr")
+                bar.empty()
+                has_text = any("text" in d for d in r["dets"])
+            st.caption("💡 Click any box to download its cutout, read its coordinates"
+                       + (" or copy its text." if has_text else ". Use the OCR button to read the text inside each box."))
             st.iframe(overlay_doc(page, r["dets"], lang, f"{image_name}_{key}"), height="content")
             st.html(legend_html(lang, {d["label"] for d in r["dets"]}))
             buf = io.BytesIO()
             annotate_png(page, r["dets"]).save(buf, "PNG")
-            c1, c2 = st.columns(2)
+            c1, c2, c3 = st.columns(3)
             c1.download_button("⬇ Annotated image (PNG)", buf.getvalue(), f"{image_name}_{key}.png", "image/png", key=f"dp_{key}")
+            if has_text:
+                txt = "\n\n".join(f"[#{i} {d['label']}]\n{d['text']}" for i, d in enumerate(r["dets"], 1) if d.get("text"))
+                c3.download_button("⬇ Extracted text (TXT)", txt, f"{image_name}_{key}.txt", "text/plain", key=f"dt_{key}")
             payload = json.dumps(detections_json(r["dets"], page.size, lang, image_name), indent=2, ensure_ascii=False)
             c2.download_button("⬇ Detections (JSON)", payload, f"{image_name}_{key}.json", "application/json", key=f"dj_{key}")
             with st.expander(f"📐 Coordinates of all {len(r['dets'])} boxes (pixels, top-left origin)"):
@@ -659,7 +709,7 @@ def main() -> None:
         st.session_state.setdefault(k, v)
     st.html(CSS)
     st.html('<div class="hero"><h1>IndicDLP Live Layout Studio</h1>'
-            '<p>Drop in a document page and watch YOLOv10x, DocLayout-YOLO and YOLO26x read its layout, region by region, in English and Bengali.</p></div>')
+            '<p>Drop in a document page and watch YOLOv10x and DocLayout-YOLO read its layout, region by region, in English and Bengali.</p></div>')
     cfg = sidebar()
     lang = st.session_state["lang"]
 

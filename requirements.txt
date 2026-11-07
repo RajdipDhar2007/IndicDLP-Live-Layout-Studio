@@ -2,18 +2,15 @@
 # Python 3.10 or newer. CPU-only machines work too, just slower.
 
 streamlit>=1.57          # tested with 1.64.0
-ultralytics>=8.4         # YOLOv10x and YOLO26 weights (YOLO26 needs 8.4.0+, tested with 8.4.178)
+ultralytics>=8.4         # YOLOv10x weights
 doclayout-yolo>=0.0.4    # DocLayout-YOLO weights
 ensemble-boxes>=1.0.9    # box fusion for the multi-scale boost and Ensemble Fusion
 huggingface_hub          # imported by doclayout-yolo
 pillow>=10
 numpy
 opencv-python
+easyocr                  # text extraction (OCR) for Bengali and English
 
 # PyTorch is NOT listed on purpose: install the build that matches your hardware first, see README.md.
 #   NVIDIA GPU (CUDA 12.8):  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 #   CPU only:                pip install torch torchvision
-
-# Only needed to rebuild the YOLO26 training data (yolo26/prepare_data.py):
-pyarrow
-pyyaml
