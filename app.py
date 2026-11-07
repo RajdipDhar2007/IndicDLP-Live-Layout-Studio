@@ -12,7 +12,9 @@ import base64
 import collections
 import io
 import json
+import os
 import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from html import escape
@@ -26,7 +28,7 @@ from i18n import LANGS, label as tr
 ROOT = Path(__file__).resolve().parent
 WEIGHTS = ROOT / "weights"
 ZENODO = "https://zenodo.org/records/15881917/files/{}?download=1"
-DEFAULTS = dict(conf=0.25, iou=0.70, imgsz=1024, speed="Normal", boost=True, fuse=True, lang="en")
+DEFAULTS = dict(ocr_engine="gemini", conf=0.25, iou=0.70, imgsz=1024, speed="Normal", boost=True, fuse=True, lang="en")
 
 st.set_page_config(page_title="IndicDLP Live Layout Studio", page_icon="📄", layout="wide")
 
@@ -147,20 +149,111 @@ def load_ocr(device: str):
     return easyocr.Reader(["bn", "en"], gpu=device != "cpu", verbose=False)  # Bengali + English
 
 
-def ocr_page(page: Image.Image, dets: list[dict], device: str, progress=None) -> None:
+GEMINI_MODELS = [m for m in dict.fromkeys([os.environ.get("GEMINI_MODEL", "gemini-3.5-flash"), "gemini-3.5-flash",
+                                           "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]) if m]
+GEMINI_PROMPT = ("The image is a contact sheet of {n} snippets cut from a document page. Each snippet sits under a yellow label "
+                 "'#<number>'. The text may be Bengali, English or both. Transcribe the text of every snippet exactly as written, "
+                 "in reading order, keeping line breaks. Do not translate, correct, summarise or add anything. Answer with a JSON "
+                 "object that maps each label number (as a string) to its transcribed text; use an empty string when a snippet "
+                 "has no readable text.")
+
+
+def gemini_key() -> str:
+    key = st.session_state.get("gemini_key") or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or ""
+    if not key:
+        try:
+            key = st.secrets.get("GEMINI_API_KEY", "")
+        except Exception:
+            key = ""
+    return key.strip()
+
+
+def contact_sheet(items: list[tuple[int, Image.Image]]) -> Image.Image:
+    """Stacks the numbered crops into one tall image so a whole page needs a single Gemini request."""
+    width = min(1600, max(c.width for _, c in items))
+    font, rows, height = get_font(30), [], 0
+    for i, crop in items:
+        c = crop.convert("RGB")
+        if c.width > width:
+            c = c.resize((width, max(1, round(c.height * width / c.width))))
+        rows.append((i, c))
+        height += c.height + 48
+    sheet = Image.new("RGB", (width, height), "white")
+    d, y = ImageDraw.Draw(sheet), 0
+    for i, c in rows:
+        d.rectangle([0, y, 110, y + 40], fill=(255, 214, 0))
+        d.text((8, y + 2), f"#{i}", fill=(0, 0, 0), font=font)
+        sheet.paste(c, (0, y + 44))
+        y += c.height + 48
+    return sheet
+
+
+def gemini_read_sheet(sheet: Image.Image, ids: list[int], key: str) -> dict[int, str]:
+    """One request for a whole sheet. Falls back to the next model when one is out of quota or overloaded."""
+    buf = io.BytesIO()
+    sheet.save(buf, "PNG")
+    body = json.dumps({"contents": [{"parts": [
+        {"text": GEMINI_PROMPT.format(n=len(ids))},
+        {"inline_data": {"mime_type": "image/png", "data": base64.b64encode(buf.getvalue()).decode()}}]}],
+        "generationConfig": {"temperature": 0, "responseMimeType": "application/json"}}).encode()
+    last = "no model answered"
+    for model in GEMINI_MODELS:
+        req = urllib.request.Request(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent", data=body,
+            headers={"Content-Type": "application/json", "x-goog-api-key": key})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = json.load(resp)
+            raw = "".join(p.get("text", "") for p in data["candidates"][0]["content"]["parts"])
+            parsed = json.loads(raw)
+            return {i: str(parsed.get(str(i), "")).strip() for i in ids}
+        except urllib.error.HTTPError as e:
+            last = f"{model}: HTTP {e.code}"
+            if e.code in (400, 401, 403):
+                raise PermissionError(f"Gemini rejected the request (HTTP {e.code}). Check the API key.") from e
+        except Exception as e:  # timeout, blocked or malformed answer: try the next model
+            last = f"{model}: {type(e).__name__}"
+    raise RuntimeError(f"Gemini could not read the page ({last}). Daily free-tier limits may be used up; try EasyOCR.")
+
+
+def ocr_page(page: Image.Image, dets: list[dict], device: str, progress=None, engine: str = "easyocr") -> None:
     """Reads the text of every text-bearing region and stores it in det["text"] ('' for non-text regions)."""
     import numpy as np
-    reader = load_ocr(device)
     w, h = page.size
     todo = [d for d in dets if d["label"] not in NON_TEXT]
     for d in dets:
         d["text"] = ""
-    for n, d in enumerate(todo, 1):
+
+    def crop_of(d):
         x1, y1, x2, y2 = d["box"]
         pad = 4
-        crop = page.crop((max(0, int(x1) - pad), max(0, int(y1) - pad), min(w, int(x2) + pad), min(h, int(y2) + pad)))
+        return page.crop((max(0, int(x1) - pad), max(0, int(y1) - pad), min(w, int(x2) + pad), min(h, int(y2) + pad)))
+
+    if engine == "gemini":
+        key = gemini_key()
+        if not key:
+            raise PermissionError("No Gemini API key. Enter it in the sidebar or set GEMINI_API_KEY.")
+        items = [(n, d, crop_of(d)) for n, d in enumerate(todo, 1)]
+        chunks, cur, tall = [], [], 0
+        for it in items:  # keep every sheet reasonably small so Gemini can read it
+            if cur and (len(cur) >= 25 or tall + it[2].height > 6000):
+                chunks.append(cur)
+                cur, tall = [], 0
+            cur.append(it)
+            tall += it[2].height + 48
+        if cur:
+            chunks.append(cur)
+        for n, chunk in enumerate(chunks, 1):
+            texts = gemini_read_sheet(contact_sheet([(i, c) for i, _, c in chunk]), [i for i, _, _ in chunk], key)
+            for i, d, _ in chunk:
+                d["text"] = texts.get(i, "")
+            if progress:
+                progress(n / len(chunks), f"Gemini {n}/{len(chunks)}")
+        return
+    reader = load_ocr(device)
+    for n, d in enumerate(todo, 1):
         try:
-            lines = reader.readtext(np.array(crop), detail=0, paragraph=True)
+            lines = reader.readtext(np.array(crop_of(d)), detail=0, paragraph=True)
         except Exception:
             lines = []
         d["text"] = "\n".join(t.strip() for t in lines if t.strip())
@@ -535,6 +628,14 @@ def sidebar() -> dict:
         imgsz = st.select_slider("Inference size", [640, 800, 1024, 1280], key="imgsz")
         speed = st.select_slider("Reveal speed", ["Cinematic", "Normal", "Fast", "Instant"], key="speed")
         st.divider()
+        st.markdown("##### 📝 Text extraction (OCR)")
+        st.selectbox("Engine", ["gemini", "easyocr"], key="ocr_engine",
+                     format_func=lambda k: {"gemini": "Gemini (cloud, most accurate)", "easyocr": "EasyOCR (local, offline)"}[k])
+        if st.session_state["ocr_engine"] == "gemini":
+            st.text_input("Gemini API key", type="password", key="gemini_key",
+                          placeholder="or set GEMINI_API_KEY", help="Kept only in this browser session. Leave empty if GEMINI_API_KEY is set.")
+            st.caption("Gemini sends each text region's image to Google. Use EasyOCR to stay offline.")
+        st.divider()
         st.caption(f"Device: **{device_name().upper()}**")
         st.button("🔄 Reset to defaults", width="stretch", on_click=reset_defaults)
     return dict(models=chosen, conf=conf, iou=iou, imgsz=imgsz, speed=speed, boost=boost, fuse=fuse_on)
@@ -675,11 +776,25 @@ def summary(image_name: str, lang: str) -> None:
     for tab, key in zip(tabs, keys):
         r = results[key]
         with tab:
+            engine = st.session_state.get("ocr_engine", "gemini")
+            if key == "fusion" and not r.get("auto_ocr"):  # Ensemble Fusion is read automatically, once
+                r["auto_ocr"] = True
+                use = engine if engine != "gemini" or gemini_key() else "easyocr"
+                with st.spinner(f"Reading text in the fused regions ({'Gemini' if use == 'gemini' else 'EasyOCR'})…"):
+                    try:
+                        ocr_page(page, r["dets"], device_name(), None, use)
+                    except Exception as e:
+                        st.warning(f"Automatic OCR failed: {e}")
+                        for d in r["dets"]:
+                            d.pop("text", None)
             has_text = any("text" in d for d in r["dets"])
-            if not has_text and st.button("📝 Extract text (OCR, Bengali + English)", key=f"ocr_{key}"):
-                bar = st.progress(0.0, text="Loading OCR model…")
+            nice = "Gemini" if engine == "gemini" else "EasyOCR"
+            if st.button(f"📝 {'Re-run' if has_text else 'Extract text'} with {nice} (Bengali + English)", key=f"ocr_{key}"):
+                bar = st.progress(0.0, text=f"Starting {nice}…")
                 try:
-                    ocr_page(page, r["dets"], device_name(), lambda p, t: bar.progress(p, text=t))
+                    ocr_page(page, r["dets"], device_name(), lambda p, t: bar.progress(p, text=t), engine)
+                except (PermissionError, RuntimeError) as e:
+                    st.error(str(e))
                 except ImportError:
                     st.error("OCR needs EasyOCR: pip install easyocr")
                 bar.empty()

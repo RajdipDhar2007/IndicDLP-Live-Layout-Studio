@@ -11,3 +11,6 @@ weights/
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# Local secrets (API keys), never commit
+.streamlit/secrets.toml

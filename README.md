@@ -27,7 +27,7 @@ Fusion, which combine the outputs of several passes or several models into a sin
 (iii) animates the detection process in real time so that the behaviour of each model can be observed region by
 region; and (iv) renders the 42 region classes in **English and Bengali**, with colour-coded, exportable results (annotated
 PNG, structured JSON and per-region cutouts that can be downloaded by clicking a box), and (v) reads the text inside
-each region with **OCR** (Bengali and English), which can be copied from the box or exported as JSON and plain text.
+each region with **OCR** (Gemini or EasyOCR, Bengali and English), which can be copied from the box or exported as JSON and plain text.
 
 **Keywords:** document layout analysis, Bengali script, object detection, YOLOv10, DocLayout-YOLO, OCR,
 weighted boxes fusion, English and Bengali user interface, Streamlit.
@@ -218,7 +218,8 @@ and figure extraction, accessibility tagging, search indexing) depend.
    and per-class statistics.
 7. **Click-to-cutout and coordinate inspection.** Clicking a box on the results page offers a PNG cutout of exactly
    that region and shows its `x1, y1, x2, y2` pixel coordinates; the same numbers are listed in a table and in the JSON export.
-8. **OCR of detected regions.** EasyOCR (Bengali and English) reads each text-bearing region (figures, tables, formulas,
+8. **OCR of detected regions.** Gemini (cloud, most accurate; needs an API key in the sidebar or the `GEMINI_API_KEY`
+   environment variable, and sends each region image to Google) or EasyOCR (local, offline) reads each text-bearing region (figures, tables, formulas,
    advertisements, flags and placeholder text are skipped). The text is shown and copyable in the click prompt, added to
    the coordinate table and the JSON export, and downloadable as a plain-text file.
 
@@ -879,7 +880,7 @@ To stop the app, press `Ctrl + C` in the terminal.
    **Coordinates of all boxes** table under the page lists every box.
 5. Change the language in the sidebar (**Region names**) to see the labels in Bengali.
    This updates the results instantly without re-running the models.
-6. Press **Extract text (OCR)** above the page of any result tab to read the text inside every text region. After a
+6. Choose the OCR engine in the sidebar (Gemini needs an API key; EasyOCR works offline), then press **Extract text** above the page of any result tab to read the text inside every text region. After a
    few seconds (the OCR models download on first use), clicking a box also shows its text with a **Copy text** button,
    the coordinate table gets a **Text** column, and the JSON and a plain-text file (**Extracted text (TXT)**) can be downloaded.
 
