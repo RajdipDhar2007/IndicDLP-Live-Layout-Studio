@@ -145,12 +145,21 @@ and the details above come from the checkpoint providers, not from re-training.
   finds small or faint regions more often.
 - **Ensemble fusion.** The answers of several models are merged into one, using a method called Weighted Boxes Fusion
   (overlapping boxes of the same label are averaged, weighted by confidence).
-- **Click a box for its cutout and coordinates.** On the results page, clicking any box asks whether to download that
-  region as its own image (a cutout), and shows the box's pixel coordinates.
+- **Click a box for its cutout and coordinates.** On the results page, clicking any box opens a window with that
+  region's cutout, its pixel coordinates and a PNG download. The cutout can be sharpened with the **ESPCN x2**
+  super-resolution network, and its text can be read with **Gemini OCR** (one request per region, with a choice of
+  Gemini model). **Transcribe all regions** reads every text region in one go.
+- **File manager and sample gallery.** Several pages can be uploaded at once, opened one at a time and ticked off as
+  done; each page keeps its own detections and OCR while switching. A gallery of sample pages is built in.
+- **Simplified classes.** An optional toggle folds the 42 classes into six families (headline, subtitle, paragraph,
+  image, caption, advertisement) for a cleaner view.
+- **Full cutout export.** One JSON file with the coordinates, classes, confidence, a cropped image and the OCR text of
+  every region.
 - **Text extraction (OCR).** One button reads the text inside every text region (Bengali and English). The text appears
   in the click prompt of each box, in the coordinate table, in the JSON export and in a plain-text download.
-- **Live reveal and bilingual labels.** The boxes appear one by one, and the label names can be switched between
-  English and Bengali without running the model again.
+- **Live reveal and multilingual labels.** The boxes appear one by one, and the label names can be switched between
+  English and 11 Indic languages (Hindi, Bengali, Assamese, Gujarati, Kannada, Malayalam, Marathi, Odia, Punjabi,
+  Tamil, Telugu) without running the model again.
 
 ### Words used in this document
 
@@ -870,13 +879,15 @@ To stop the app, press `Ctrl + C` in the terminal.
 
 ### Step 8: Using the app
 
-1. Upload a page image (PNG, JPG, JPEG, BMP or WEBP).
+1. Add one or more page images (PNG, JPG, JPEG, BMP or WEBP) in the **File manager** on the right and press **Open**
+   on the page to work on, or switch **Source** to **Sample gallery**. Tick **Done** when a page is finished.
 2. Click **🚀 Scan & detect**.
 3. Watch the scan, then each model's regions appear one by one with a live feed, stats and a progress bar.
 4. Scroll to **Results** for the comparison table, the per-class chart and the annotated page. Use the model tabs,
    and the **Download** buttons for a PNG or JSON export. Hover over a box to see its label and confidence.
-   **Click a box** to see its pixel coordinates and to be asked whether to download that region as a PNG cutout
-   (choose **Download cutout** to save it, **Copy coordinates** to copy them as JSON, or **Cancel**). The
+   **Click a box** to open its cutout window: pixel coordinates, **Download cutout (PNG)**, **Upscale crop with
+   ESPCN x2** and **Run Gemini OCR** (editable text). **Transcribe all regions** runs Gemini on every text region, and
+   **Prepare full JSON export** builds one file with all crops and OCR records. The
    **Coordinates of all boxes** table under the page lists every box.
 5. Change the language in the sidebar (**Region names**) to see the labels in Bengali.
    This updates the results instantly without re-running the models.
@@ -889,7 +900,9 @@ To stop the app, press `Ctrl + C` in the terminal.
 | Setting | What it does | Default |
 |---|---|---|
 | Model toggles | Choose which models run | All models with weights present are on |
-| Language | Language of region names | English |
+| Language | Language of region names (English and 11 Indic languages) | English |
+| Simplified classes | Folds the 42 classes into 6 families | Off |
+| Gemini model (per-region OCR) | Model used when a region is clicked or transcribed | Gemini 3.1 Flash-Lite |
 | Multi-scale boost | Runs each model at two sizes and merges the boxes, so small or faint regions are found more often (slower) | On |
 | Ensemble fusion | Merges all enabled models into one extra result | On |
 | Confidence threshold | Minimum score for a box (0.05 to 0.95). Lower finds more regions but adds false boxes | 0.25 |
@@ -954,8 +967,14 @@ All models share one environment (steps 3 to 5).
 | Path | What it is |
 |---|---|
 | `app.py` | The Streamlit app: animations, live reveal, multi-scale inference, ensemble fusion, localised results, exports |
-| `i18n.py` | Names for all 42 classes in English and Bengali |
+| `i18n.py` | Names for all 42 classes in English and 11 Indic languages |
+| `annotation_view/` | Custom Streamlit component that draws the clickable region boxes |
+| `ESPCN_x2.pb` | ESPCN x2 super-resolution weights used to upscale crops |
+| `data/` | Sample pages for the gallery and the dataset YAML (`indic.yaml`) |
+| `doclayout-yolo/` | Training, evaluation and prediction scripts for DocLayout-YOLO |
+| `guidelines/` | The IndicDLP annotation guideline (PDF) |
 | `requirements.txt` | Python dependencies for the app |
+| `.env` | Optional, not in git: `GEMINI_API_KEY=...` for Gemini OCR |
 | `weights/` | Model checkpoints (downloaded separately, not in git) |
 | `docs/images/` | Sample annotated dataset pages and the class-count table shown in Section 3 |
 

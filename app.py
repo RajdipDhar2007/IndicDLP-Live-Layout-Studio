@@ -2,7 +2,7 @@
 
 Upload a document page, watch a scan sweep over it, then see every IndicDLP model detect
 layout regions one box at a time, live in the browser. Region names can be shown in English
-or Bengali, and models can be fused for higher recall.
+or any of 11 Indic languages, and models can be fused for higher recall.
 
 Run:  python -m streamlit run app.py
 """
@@ -10,25 +10,42 @@ from __future__ import annotations
 
 import base64
 import collections
+import hashlib
 import io
 import json
+import math
 import os
 import time
 import urllib.error
 import urllib.request
+import uuid
+from datetime import datetime
 from dataclasses import dataclass
 from html import escape
 from pathlib import Path
 
 import streamlit as st
+import streamlit.components.v1 as components
 from PIL import Image, ImageDraw, ImageFont
 
-from i18n import LANGS, label as tr
+from i18n import LANGS, label as _tr
+from news import news_html
+
+try:
+    from dotenv import load_dotenv
+except ImportError:  # python-dotenv is optional; environment variables still work
+    load_dotenv = None
 
 ROOT = Path(__file__).resolve().parent
+if load_dotenv:
+    load_dotenv(ROOT / ".env")
 WEIGHTS = ROOT / "weights"
+ESPCN_MODEL = ROOT / "ESPCN_x2.pb"
+EXAMPLE_DIRS = [ROOT / "data" / "examples", ROOT / "fig" / "images"]
+annotation_view = components.declare_component("indicdlp_annotation_view", path=str(ROOT / "annotation_view"))
 ZENODO = "https://zenodo.org/records/15881917/files/{}?download=1"
-DEFAULTS = dict(ocr_on=True, ocr_engine="gemini", conf=0.25, iou=0.70, imgsz=1024, speed="Normal", boost=True, fuse=True, lang="en")
+DEFAULTS = dict(ocr_on=True, ocr_engine="gemini", conf=0.25, iou=0.70, imgsz=1024, speed="Normal", boost=True, fuse=True, lang="en",
+                gemini_model="Gemini 3.1 Flash-Lite (faster)", simplify=False)
 
 st.set_page_config(page_title="IndicDLP Live Layout Studio", page_icon="📄", layout="wide")
 
@@ -88,6 +105,48 @@ GROUPS: list[tuple[str, dict[str, str]]] = [
 COLORS = {name: col for _, members in GROUPS for name, col in members.items()}
 assert set(COLORS) == set(CLASS_NAMES), set(CLASS_NAMES) ^ set(COLORS)
 
+# Optional simplified view: the 42 classes are folded into 6 families (sidebar toggle "Simplified classes").
+SIMPLE_GROUPS: list[tuple[str, dict[str, str]]] = [
+    ("Headlines", {"headline": "#22c55e"}),
+    ("Subtitles", {"subtitle": "#f97316"}),
+    ("Paragraphs (Body / Text)", {"paragraph": "#3b82f6"}),
+    ("Images", {"image": "#06b6d4"}),
+    ("Captions", {"caption": "#67e8f9"}),
+    ("Advertisements", {"advertisement": "#b45309"}),
+]
+COLORS.update({name: col for _, members in SIMPLE_GROUPS for name, col in members.items()})
+SUBTITLE_CLASSES = {"sub-headline", "subsub-headline", "chapter-title", "section-title",
+                    "sub-section-title", "subsub-section-title"}
+IMAGE_CLASSES = {"figure", "table", "formula", "flag"}
+CAPTION_CLASSES = {"figure-caption", "table-caption"}
+
+
+def normalized_label(source_label: str) -> str:
+    if source_label == "headline":
+        return "headline"
+    if source_label in SUBTITLE_CLASSES:
+        return "subtitle"
+    if source_label in IMAGE_CLASSES:
+        return "image"
+    if source_label in CAPTION_CLASSES:
+        return "caption"
+    if source_label == "advertisement":
+        return "advertisement"
+    return "paragraph"
+
+
+def relabel(dets: list[dict], simplify: bool) -> list[dict]:
+    """Keep the model's own class in `source_label`; `label` is the class shown to the user."""
+    for d in dets:
+        d["source_label"] = CLASS_NAMES[d["cls"]]
+        d["label"] = normalized_label(d["source_label"]) if simplify else d["source_label"]
+    return dets
+
+
+def tr(lang: str, label: str) -> str:
+    """Localised class name (also knows the simplified classes)."""
+    return _tr(lang, {"subtitle": "section-title", "image": "figure", "caption": "figure-caption"}.get(label, label))
+
 
 def color_of(det_or_name) -> str:
     name = det_or_name["label"] if isinstance(det_or_name, dict) else det_or_name
@@ -140,7 +199,7 @@ def load_model(key: str, device: str):
 
 
 # Regions that hold no running text; OCR skips them.
-NON_TEXT = {"figure", "table", "formula", "advertisement", "flag", "placeholder-text"}
+NON_TEXT = {"figure", "table", "formula", "advertisement", "flag", "placeholder-text", "image"}
 
 
 @st.cache_resource(show_spinner=False)
@@ -300,7 +359,7 @@ def run_model(key: str, image: Image.Image, cfg: dict, device: str) -> tuple[lis
         scales.append(1280 if cfg["imgsz"] < 1280 else 1024)  # a second scale recovers small / faint regions
     passes = [predict_once(key, image, cfg["conf"], cfg["iou"], s, device) for s in scales]
     dets = fuse(passes, image.size, cfg["conf"], 0.6) if len(passes) > 1 else passes[0]
-    return reading_order(dets), time.perf_counter() - t0
+    return relabel(reading_order(dets), cfg.get("simplify", False)), time.perf_counter() - t0
 
 
 # ----------------------------------------------------------------------------
@@ -366,101 +425,6 @@ def scan_html(image: Image.Image, caption: str) -> str:
       <div class="scan-label">{escape(caption)}</div>
     </div>"""
 
-
-def overlay_doc(image: Image.Image, dets: list[dict], lang: str, stem: str = "document") -> str:
-    """Self-contained HTML page (shown in an iframe): the document with colour-coded, localised region labels.
-
-    Labels are real HTML text, so the browser shapes the Bengali script correctly and sizes each label to its text.
-    Clicking a box opens a small prompt that offers that region's cutout (cropped in the browser from the
-    full-resolution page, no server round-trip) and shows its pixel coordinates.
-    """
-    w, h = image.size
-    dense = len(dets) > 30  # on busy pages paragraph labels are shown on hover only
-    boxes = []
-    for i, d in enumerate(dets, 1):
-        x1, y1, x2, y2 = d["box"]
-        col = color_of(d)
-        name = escape(tr(lang, d["label"]))
-        quiet = " q" if dense and d["label"] == "paragraph" else ""
-        edge = " in" if y1 / h < 0.025 else ""
-        data = escape(json.dumps(dict(i=i, label=d["label"], name=tr(lang, d["label"]), conf=round(d["conf"], 4), text=d.get("text", ""),
-                                      box=[round(v, 1) for v in d["box"]]), ensure_ascii=False), quote=True)
-        boxes.append(
-            f'<div class="b{quiet}" data-d="{data}" style="left:{x1 / w * 100:.3f}%;top:{y1 / h * 100:.3f}%;width:{(x2 - x1) / w * 100:.3f}%;'
-            f'height:{(y2 - y1) / h * 100:.3f}%;--c:{col};animation-delay:{min(i * 10, 1200)}ms" title="#{i} {name} · {d["conf"] * 100:.0f}%">'
-            f'<span class="l{edge}">{name}</span></div>')
-    return f"""<!doctype html><html><head><meta charset="utf-8"><style>
-html,body{{margin:0;background:transparent}}
-.wrap{{position:relative;line-height:0;container-type:inline-size;border-radius:14px;overflow:hidden;
- border:1px solid #2a2f5a;box-shadow:0 0 30px rgba(124,58,237,.25)}}
-.wrap img{{width:100%;display:block}}
-.b{{position:absolute;box-sizing:border-box;border:2px solid var(--c);background:color-mix(in srgb,var(--c) 16%,transparent);
- animation:in .5s ease both}}
-.b:hover{{background:color-mix(in srgb,var(--c) 38%,transparent);z-index:5}}
-.l{{position:absolute;left:-2px;bottom:100%;white-space:nowrap;background:var(--c);color:#0a0b1a;font-weight:700;
- font-size:clamp(8px,1.3cqw,17px);line-height:1.35;padding:0 .4em;border-radius:3px 3px 0 0;
- font-family:'Nirmala UI','Noto Sans','Noto Sans Bengali','Segoe UI',sans-serif}}
-.l.in{{bottom:auto;top:0;border-radius:0 0 3px 0}}
-.b.q .l{{display:none}}.b.q:hover .l{{display:block}}
-.b{{cursor:pointer}}.b.sel{{outline:2px dashed #fff;outline-offset:1px;z-index:6}}
-.pop{{position:absolute;z-index:20;display:none;width:min(92cqw,22em);box-sizing:border-box;
- font:600 clamp(11px,1.5cqw,15px)/1.4 'Nirmala UI','Noto Sans','Noto Sans Bengali','Segoe UI',sans-serif;color:#e8eaff;
- background:#12153aee;border:1px solid var(--c,#7cf3ff);border-radius:10px;padding:.7em .9em;box-shadow:0 8px 30px #000a}}
-.pop h4{{margin:0 0 .3em;font-size:1.05em;color:var(--c)}}
-.pop code{{display:block;background:#0a0b1a;border-radius:6px;padding:.35em .5em;margin:.3em 0;color:#7cf3ff;font:500 .95em Consolas,monospace;white-space:normal}}
-.pop pre{{margin:.4em 0;max-height:9em;overflow:auto;white-space:pre-wrap;background:#0a0b1a;border-radius:6px;
- padding:.4em .55em;color:#e8eaff;font:500 1em 'Nirmala UI','Noto Sans','Noto Sans Bengali','Segoe UI',sans-serif}}
-.pop q{{display:block;margin:.5em 0 .3em;quotes:none;color:#c4c8ee}}
-.pop button{{cursor:pointer;border:1px solid #3b82f6;background:#1e3a8a;color:#fff;border-radius:7px;padding:.3em .8em;
- font:inherit;margin:.2em .3em 0 0}}
-.pop button.go{{background:#2563eb}}.pop button:hover{{filter:brightness(1.25)}}
-@keyframes in{{from{{opacity:0;transform:scale(.97)}}to{{opacity:1;transform:none}}}}
-</style></head><body><div class="wrap"><img id="pg" src="data:image/jpeg;base64,{b64_jpeg(image, 85)}">{"".join(boxes)}
-<div class="pop" id="pop"><h4 id="pt"></h4><code id="pc"></code><pre id="ptx" style="display:none"></pre><q>Download this cutout as a PNG?</q>
-<button class="go" id="pdl">⬇ Download cutout</button><button id="pcp">Copy coordinates</button><button id="pct" style="display:none">Copy text</button><button id="px">Cancel</button></div></div>
-<script>
-const STEM={json.dumps(stem)},wrap=document.querySelector('.wrap'),pop=document.getElementById('pop'),img=document.getElementById('pg');
-let cur=null,selEl=null;
-const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-function close(){{pop.style.display='none';if(selEl)selEl.classList.remove('sel');cur=selEl=null}}
-wrap.addEventListener('click',e=>{{
-  if(pop.contains(e.target))return;
-  const b=e.target.closest('.b');
-  if(!b){{close();return}}
-  if(selEl)selEl.classList.remove('sel');
-  selEl=b;b.classList.add('sel');cur=JSON.parse(b.dataset.d);
-  const [x1,y1,x2,y2]=cur.box.map(Math.round);
-  pop.style.setProperty('--c',getComputedStyle(b).getPropertyValue('--c'));
-  document.getElementById('pt').textContent='#'+cur.i+' · '+cur.name+' · '+Math.round(cur.conf*100)+'%';
-  document.getElementById('pc').textContent='x1='+x1+'  y1='+y1+'  x2='+x2+'  y2='+y2+'   ('+(x2-x1)+' × '+(y2-y1)+' px)';
-  const tx=document.getElementById('ptx'),ct=document.getElementById('pct');
-  tx.textContent=cur.text||'';tx.style.display=cur.text?'block':'none';ct.style.display=cur.text?'inline-block':'none';
-  pop.style.display='block';
-  const r=wrap.getBoundingClientRect();
-  pop.style.left=clamp(e.clientX-r.left+8,4,Math.max(4,r.width-pop.offsetWidth-4))+'px';
-  pop.style.top=clamp(e.clientY-r.top+8,4,Math.max(4,r.height-pop.offsetHeight-4))+'px';
-}});
-document.getElementById('px').onclick=close;
-document.getElementById('pcp').onclick=()=>{{
-  const t=JSON.stringify({{id:cur.i,label:cur.label,bbox_xyxy:cur.box,confidence:cur.conf}});
-  (navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).catch(()=>{{
-    const a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();document.execCommand('copy');a.remove()}});
-  const bt=document.getElementById('pcp');bt.textContent='Copied ✓';setTimeout(()=>bt.textContent='Copy coordinates',1500)}};
-document.getElementById('pct').onclick=()=>{{
-  const t=cur.text;
-  (navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).catch(()=>{{
-    const a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();document.execCommand('copy');a.remove()}});
-  const bt=document.getElementById('pct');bt.textContent='Copied ✓';setTimeout(()=>bt.textContent='Copy text',1500)}};
-document.getElementById('pdl').onclick=()=>{{
-  const sx=img.naturalWidth/{w},sy=img.naturalHeight/{h};
-  const x=Math.round(clamp(cur.box[0],0,{w})*sx),y=Math.round(clamp(cur.box[1],0,{h})*sy);
-  const cw=Math.max(1,Math.round(clamp(cur.box[2],0,{w})*sx)-x),ch=Math.max(1,Math.round(clamp(cur.box[3],0,{h})*sy)-y);
-  const c=document.createElement('canvas');c.width=cw;c.height=ch;
-  c.getContext('2d').drawImage(img,x,y,cw,ch,0,0,cw,ch);
-  const name=STEM+'_'+String(cur.i).padStart(2,'0')+'_'+cur.label+'.png';
-  c.toBlob(bl=>{{const a=document.createElement('a');a.href=URL.createObjectURL(bl);a.download=name;
-    document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),2000);close()}},'image/png')}};
-</script></body></html>"""
 
 def feed_html(dets: list[dict], shown: int, lang: str) -> str:
     rows = []
@@ -617,6 +581,8 @@ def sidebar() -> dict:
         st.markdown("##### 🌐 Region names")
         st.selectbox("Language", list(LANGS), format_func=lambda k: LANGS[k], key="lang",
                      help="Class names in the feed, chips, legend, tables and the final annotated page.")
+        st.toggle("Simplified classes", key="simplify",
+                  help="Folds the 42 classes into 6 families: headline, subtitle, paragraph, image, caption, advertisement.")
         st.divider()
         st.markdown("##### 🎯 Accuracy")
         boost = st.toggle("Multi-scale boost", key="boost",
@@ -637,11 +603,14 @@ def sidebar() -> dict:
         if st.session_state["ocr_on"] and st.session_state["ocr_engine"] == "gemini":
             st.text_input("Gemini API key", type="password", key="gemini_key",
                           placeholder="or set GEMINI_API_KEY", help="Kept only in this browser session. Leave empty if GEMINI_API_KEY is set.")
+            st.selectbox("Gemini model for per-region OCR", list(GEMINI_OCR_MODELS), key="gemini_model",
+                         help="Used when you click a region (or press Transcribe All). Each region is sent only once.")
             st.caption("Gemini sends each text region's image to Google. Use EasyOCR to stay offline.")
         st.divider()
         st.caption(f"Device: **{device_name().upper()}**")
         st.button("🔄 Reset to defaults", width="stretch", on_click=reset_defaults)
-    return dict(models=chosen, conf=conf, iou=iou, imgsz=imgsz, speed=speed, boost=boost, fuse=fuse_on)
+    return dict(models=chosen, conf=conf, iou=iou, imgsz=imgsz, speed=speed, boost=boost, fuse=fuse_on,
+                simplify=st.session_state["simplify"])
 
 
 def step_delay(speed: str, n: int) -> float:
@@ -716,17 +685,393 @@ def analyse(image: Image.Image, cfg: dict, lang: str) -> None:
         def fused():
             t0 = time.perf_counter()
             dets = fuse([r["dets"] for r in results.values()], image.size, cfg["conf"], 0.55)
-            return reading_order(dets), sum(r["elapsed"] for r in results.values()) + time.perf_counter() - t0
+            return relabel(reading_order(dets), cfg.get("simplify", False)), sum(r["elapsed"] for r in results.values()) + time.perf_counter() - t0
         r = reveal(FUSION, fused, shown_img, scale, cfg, lang, device)
         if r:
             results["fusion"] = r
 
     st.session_state["result"] = results
-    st.session_state["shown_img"] = image  # full-resolution page for the final SVG / PNG
+    st.session_state["shown_img"] = image.copy()  # full-resolution page for exports and crop previews
+    st.session_state["result_id"] = uuid.uuid4().hex
 
 
 def title_of(key: str) -> str:
     return FUSION.title if key == "fusion" else MODELS[key].title
+
+
+# ----------------------------------------------------------------------------
+# Crops, ESPCN upscaling and per-region Gemini OCR (click a box to open it)
+# ----------------------------------------------------------------------------
+def crop_bounds(image: Image.Image, box: tuple[float, float, float, float]) -> tuple[int, int, int, int] | None:
+    """Round a valid xyxy box outward, clamp it to the source image, and reject empty boxes."""
+    try:
+        x1, y1, x2, y2 = (float(v) for v in box)
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in (x1, y1, x2, y2)) or x2 <= x1 or y2 <= y1:
+        return None
+    left = max(0, min(image.width, math.floor(x1)))
+    top = max(0, min(image.height, math.floor(y1)))
+    right = max(0, min(image.width, math.ceil(x2)))
+    bottom = max(0, min(image.height, math.ceil(y2)))
+    return (left, top, right, bottom) if right > left and bottom > top else None
+
+
+def image_fingerprint(image: Image.Image) -> str:
+    """Identify image content so same-name, same-size uploads do not reuse stale results."""
+    digest = hashlib.sha256()
+    digest.update(f"{image.mode}:{image.size}".encode("ascii"))
+    digest.update(image.tobytes())
+    return digest.hexdigest()
+
+
+@st.cache_resource(show_spinner=False)
+def load_espcn():
+    """Load the ESPCN x2 super-resolution model once for the app session."""
+    import cv2
+    if not ESPCN_MODEL.is_file():
+        raise FileNotFoundError(f"ESPCN model not found: {ESPCN_MODEL.name}")
+    if not hasattr(cv2, "dnn_superres"):
+        raise RuntimeError("ESPCN upscaling needs OpenCV contrib (dnn_superres): pip install opencv-contrib-python")
+    create_model = getattr(cv2.dnn_superres, "DnnSuperResImpl_create", None)
+    model = create_model() if create_model else cv2.dnn_superres.DnnSuperResImpl.create()
+    model.readModel(str(ESPCN_MODEL))
+    model.setModel("espcn", 2)
+    return model
+
+
+@st.cache_data(show_spinner=False, max_entries=2)
+def upscale_espcn(image_bytes: bytes, width: int, height: int) -> Image.Image:
+    """Return an RGB x2 ESPCN image, caching the result across ordinary reruns."""
+    import cv2
+    import numpy as np
+    rgb_arr = np.frombuffer(image_bytes, dtype=np.uint8).reshape(height, width, 3)
+    bgr = cv2.cvtColor(rgb_arr, cv2.COLOR_RGB2BGR)
+    return Image.fromarray(cv2.cvtColor(load_espcn().upsample(bgr), cv2.COLOR_BGR2RGB))
+
+
+GEMINI_OCR_PROMPT = """You are an expert OCR transcription system for Indian-language and other vernacular documents, including historical, degraded, and mixed-script print.
+
+Transcribe only text that is visibly present in the supplied image crop. Identify the script and language from the glyphs, then reproduce the text in that original script. Preserve spelling, vowel signs, diacritics, conjuncts, punctuation, digits, capitalization, word spacing, and line breaks as printed. Follow the script's reading direction and preserve the visible reading order. For mixed-language text, transcribe each part in its own original script.
+
+Do not translate, transliterate, modernize, normalize, correct, expand abbreviations, complete cut-off words, or paraphrase. Do not infer text hidden by blur, crop edges, stains, or damage; omit portions that cannot be read reliably. Use the surrounding visible glyphs only to distinguish ambiguous characters, not to invent missing content.
+
+The detected region category is context only: {region_label}. Do not use it to invent text.
+
+Return only the OCR transcription as plain text. Do not add a title, language name, label, translation, explanation, confidence estimate, quotation marks, markdown, or any other commentary. If no text is readable, return an empty response."""
+GEMINI_OCR_MODELS = {
+    "Gemini 3.1 Flash-Lite (faster)": "gemini-3.1-flash-lite",
+    "Gemini 3.8 Flash": "gemini-3.8-flash",
+}
+
+
+@st.cache_resource(show_spinner=False)
+def get_gemini_client(api_key: str):
+    from google import genai
+    from google.genai import types
+    return genai.Client(api_key=api_key, http_options=types.HttpOptions(
+        timeout=60_000, retry_options=types.HttpRetryOptions(attempts=1)))
+
+
+def gemini_ocr(image_jpeg: bytes, region_label: str, model_name: str) -> str:
+    """One Gemini request for a single cropped region; logs timing to the terminal."""
+    started = time.perf_counter()
+
+    def stamp() -> str:
+        return datetime.now().astimezone().isoformat(timespec="seconds")
+
+    print(f"[Gemini OCR] START {stamp()} | model={model_name} | class={region_label} | crop_bytes={len(image_jpeg)}", flush=True)
+    api_key = gemini_key()
+    try:
+        from google.genai import types
+        if not api_key:
+            raise RuntimeError("No Gemini API key. Enter it in the sidebar, or set GEMINI_API_KEY / GOOGLE_GEMINI_API_KEY in .env.")
+        response = get_gemini_client(api_key).models.generate_content(
+            model=model_name,
+            contents=[GEMINI_OCR_PROMPT.format(region_label=region_label),
+                      types.Part.from_bytes(data=image_jpeg, mime_type="image/jpeg")],
+            config=types.GenerateContentConfig(
+                response_mime_type="text/plain", max_output_tokens=2048,
+                thinking_config=types.ThinkingConfig(thinking_level="low")),  # type: ignore
+        )
+        text = (response.text or "").strip()
+        print(f"[Gemini OCR] SUCCESS {stamp()} | model={model_name} | class={region_label} "
+              f"| elapsed={time.perf_counter() - started:.2f}s | chars={len(text)}", flush=True)
+        return text
+    except Exception as exc:
+        message = str(exc).replace(api_key, "[hidden]") if api_key else str(exc)
+        print(f"[Gemini OCR] ERROR {stamp()} | model={model_name} | class={region_label} "
+              f"| elapsed={time.perf_counter() - started:.2f}s | error={type(exc).__name__}: {message}", flush=True)
+        raise RuntimeError(f"Gemini OCR failed: {message}") from exc
+
+
+def region_record_key(result_id: str, model_key: str, index: int) -> str:
+    return f"{result_id}:{model_key}:{index}"
+
+
+def ensure_region_ocr(result_id: str, model_key: str, index: int, detection: dict,
+                      bounds: tuple[int, int, int, int], crop: Image.Image, gemini_model: str | None = None) -> dict:
+    """Attempt OCR once for this detection in this result set and keep its full record."""
+    record_key = region_record_key(result_id, model_key, index)
+    records = st.session_state.setdefault("region_records", {})
+    record = records.get(record_key)
+    if record is not None and record.get("ocr", {}).get("attempted"):
+        return record
+    x1, y1, x2, y2 = bounds
+    buf = io.BytesIO()
+    crop.convert("RGB").save(buf, format="JPEG", quality=88, optimize=True)
+    model_name = gemini_model or GEMINI_OCR_MODELS[st.session_state.get("gemini_model", next(iter(GEMINI_OCR_MODELS)))]
+    record = {
+        "region_id": f"{model_key}-{index + 1}", "model": model_key, "index": index,
+        "class": detection["label"], "source_class": detection.get("source_label", detection["label"]),
+        "confidence": float(detection["conf"]), "box_xyxy_px": [x1, y1, x2, y2],
+        "crop": {"width_px": crop.width, "height_px": crop.height, "format": "image/jpeg"},
+        "ocr": {"attempted": True, "status": "pending", "model": model_name, "text": "", "error": None},
+    }
+    records[record_key] = record
+    try:
+        record["ocr"].update(status="complete", text=gemini_ocr(buf.getvalue(), detection["label"], model_name))
+    except Exception as exc:
+        record["ocr"].update(status="error", error=str(exc))
+    return record
+
+
+@st.dialog("Detection crop", dismissible=False)
+def show_detection_crop(model_title: str, number: int, detection: dict, bounds, crop: Image.Image | None,
+                        ocr_text_prefix: str, result_id: str, model_key: str, detection_index: int, name: str) -> None:
+    def close() -> None:
+        st.session_state["active_crop_dialog"] = None
+        st.rerun()
+
+    if bounds is None or crop is None:
+        st.info("The selected detection has an invalid or empty box.")
+        if st.button("Close", key=f"close_invalid_{ocr_text_prefix}"):
+            close()
+        return
+    x1, y1, x2, y2 = bounds
+    st.caption(f"{model_title} | Detection #{number} | {tr(st.session_state['lang'], detection['label'])} | "
+               f"confidence {detection['conf']:.3f}")
+    st.code(f"x1={x1}  y1={y1}  x2={x2}  y2={y2}   ({x2 - x1} x {y2 - y1} px)", language=None)
+    original_col, upscaled_col = st.columns(2)
+    original_col.image(crop, caption="Original crop", width="stretch")
+    upscale_key = f"crop_upscale_{ocr_text_prefix}"
+    upscale_error_key = f"crop_upscale_error_{ocr_text_prefix}"
+    upscaled = st.session_state.get(upscale_key)
+    if upscaled is None and upscaled_col.button("Upscale crop with ESPCN x2", key=upscale_key + "_button"):
+        try:
+            with st.spinner("Upscaling crop"):
+                upscaled = upscale_espcn(crop.tobytes(), crop.width, crop.height)
+            st.session_state[upscale_key] = upscaled
+            st.session_state.pop(upscale_error_key, None)
+        except Exception as exc:
+            st.session_state[upscale_error_key] = str(exc)
+        st.rerun()
+    if upscaled is not None:
+        upscaled_col.image(upscaled, caption=f"ESPCN x2 | {upscaled.width} x {upscaled.height} px", width="stretch")
+    elif upscale_error := st.session_state.get(upscale_error_key):
+        upscaled_col.warning(f"Could not upscale this crop: {upscale_error}")
+    png = io.BytesIO()
+    crop.save(png, "PNG")
+    st.download_button("Download cutout (PNG)", png.getvalue(),
+                       f"{name}_{model_key}_{number:02d}_{detection.get('source_label', detection['label'])}.png",
+                       "image/png", key=f"cut_{ocr_text_prefix}")
+
+    st.markdown("#### Gemini OCR")
+    if not st.session_state.get("ocr_on", True):
+        st.caption("OCR is switched off in the sidebar.")
+    elif detection["label"] in NON_TEXT:
+        st.caption("OCR is skipped for image and advertisement regions.")
+    else:
+        record_key = region_record_key(result_id, model_key, detection_index)
+        ocr_text_key = f"ocr_text_{record_key}"
+        records = st.session_state.setdefault("region_records", {})
+        selected_model = GEMINI_OCR_MODELS[st.session_state["gemini_model"]]
+        record = records.get(record_key)
+        if record is None or not record.get("ocr", {}).get("attempted"):
+            st.caption(f"Selected model: {selected_model}. Change it in the sidebar, then run OCR when ready.")
+            if st.button("Run Gemini OCR", key=f"run_ocr_{record_key}", type="primary"):
+                with st.spinner(f"Waiting for {selected_model}"):
+                    record = ensure_region_ocr(result_id, model_key, detection_index, detection, bounds, crop, selected_model)
+        if record is not None:
+            if record["ocr"]["status"] == "error":
+                st.error(record["ocr"]["error"])
+            elif record["ocr"].get("model") != selected_model:
+                st.info(f"This region was already processed with {record['ocr'].get('model')}; it will not be sent again.")
+            st.session_state.setdefault(ocr_text_key, record["ocr"].get("text", ""))
+            st.text_area("OCR transcription (editable)", key=ocr_text_key, height=180)
+            record["ocr"]["text"] = st.session_state[ocr_text_key]
+            detection["text"] = record["ocr"]["text"]
+            st.caption(f"Model used: {record['ocr'].get('model')}. This region is sent to Gemini once per detection.")
+        elif detection.get("text"):
+            st.text_area("Text read by the page-level OCR", detection["text"], height=140, disabled=True,
+                         key=f"page_ocr_{record_key}")
+    if st.button("Close", key=f"close_{ocr_text_prefix}"):
+        close()
+
+
+def eligible_regions(results: dict) -> list[tuple[str, int, dict]]:
+    return [(mk, i, d) for mk, r in results.items() for i, d in enumerate(r["dets"]) if d["label"] not in NON_TEXT]
+
+
+def transcribe_regions(results: dict, page: Image.Image, result_id: str, label: str) -> tuple[int, int, int]:
+    """Gemini OCR (once per region) for every text region of every model. Returns (done, errors, eligible)."""
+    eligible = eligible_regions(results)
+    records = st.session_state.setdefault("region_records", {})
+    progress = st.progress(0, text=label)
+    done = errors = 0
+    for pos, (mk, i, d) in enumerate(eligible, 1):
+        record = records.get(region_record_key(result_id, mk, i))
+        if record is None or not record.get("ocr", {}).get("attempted"):
+            bounds = crop_bounds(page, d["box"])
+            if bounds is not None:
+                record = ensure_region_ocr(result_id, mk, i, d, bounds, page.crop(bounds))
+        if record and record["ocr"].get("status") == "complete":
+            done += 1
+            d["text"] = record["ocr"]["text"]
+        elif record and record["ocr"].get("status") == "error":
+            errors += 1
+        progress.progress(pos / max(len(eligible), 1), text=f"Processed {pos} of {len(eligible)} text regions")
+    progress.empty()
+    return done, errors, len(eligible)
+
+
+def full_export(results: dict, page: Image.Image, result_id: str, image_name: str, lang: str) -> str:
+    """Every region of every model with coordinates, classes, a base64 crop and its Gemini OCR record."""
+    records = st.session_state.setdefault("region_records", {})
+    models = {}
+    for mk, result in results.items():
+        regions = []
+        for i, d in enumerate(result["dets"]):
+            bounds = crop_bounds(page, d["box"])
+            record = records.get(region_record_key(result_id, mk, i))
+            x1, y1, x2, y2 = bounds or (0, 0, 0, 0)
+            if record is None:
+                crop_size = {"width_px": max(0, x2 - x1), "height_px": max(0, y2 - y1), "format": "image/jpeg"}
+                ocr = {"attempted": False, "status": "skipped", "model": None, "text": d.get("text"), "error": None}
+                if d["label"] in NON_TEXT:
+                    ocr["reason"] = "OCR skipped for image and advertisement regions"
+                elif bounds is None:
+                    ocr["reason"] = "The detected region has no valid crop bounds"
+            else:
+                crop_size, ocr = record["crop"], record["ocr"]
+            crop_data = dict(crop_size)
+            if bounds is not None:
+                crop_data["image_data_uri"] = f"data:image/jpeg;base64,{b64_jpeg(page.crop(bounds), 82)}"
+            regions.append({
+                "region_id": f"{mk}-{i + 1}", "class": d["label"], "source_class": d.get("source_label", d["label"]),
+                "class_local": tr(lang, d["label"]), "confidence": float(d["conf"]),
+                "box_xyxy_px": [round(float(v), 1) for v in d["box"]], "box_xyxy_px_int": [x1, y1, x2, y2],
+                "box_xywh_normalized": [round(x1 / page.width, 6), round(y1 / page.height, 6),
+                                        round((x2 - x1) / page.width, 6), round((y2 - y1) / page.height, 6)],
+                "crop": crop_data, "ocr": ocr,
+            })
+        models[mk] = {"name": title_of(mk), "elapsed_seconds": result["elapsed"], "regions": regions}
+    return json.dumps({
+        "schema_version": 1,
+        "source": {"filename": image_name, "width_px": page.width, "height_px": page.height},
+        "coordinate_system": "pixel xyxy, origin at top-left; normalized xywh is relative to page dimensions",
+        "models": models}, indent=2, ensure_ascii=False)
+
+
+def list_examples() -> dict[str, Path]:
+    out: dict[str, Path] = {}
+    for d in EXAMPLE_DIRS:
+        if d.exists():
+            for p in sorted([*d.glob("*.png"), *d.glob("*.jpg")]):
+                out[p.stem] = p
+    return out
+
+
+def file_manager_panel() -> tuple[bytes | None, str | None]:
+    """Keep uploaded pages and their completion flags in this Streamlit session."""
+    st.html("""<style>
+      .st-key-file_manager_list { position: sticky; top: .75rem; z-index: 5;
+        border: 1px solid rgba(124, 58, 237, .35); border-radius: 14px;
+        background: color-mix(in srgb, var(--secondary-background-color) 94%, #7c3aed 6%);
+        box-shadow: 0 8px 24px rgba(30, 20, 70, .18); }
+      .st-key-file_manager_list [data-testid="stMarkdownContainer"] { font-size: .78rem; line-height: 1.2; }
+      .st-key-file_manager_list [data-testid="stButton"] button,
+      .st-key-file_manager_list [data-testid="stCheckbox"] label { font-size: .72rem; }
+    </style>""")
+    st.markdown("### 🗂️ File manager")
+    st.caption("Add batches; open a page to work on it.")
+    uploads = st.file_uploader("Add image files", type=["png", "jpg", "jpeg", "bmp", "webp"],
+                               accept_multiple_files=True, key="file_manager_uploads", label_visibility="collapsed")
+    items = st.session_state.setdefault("file_manager_items", [])
+    known_ids = {item["id"] for item in items}
+    processed_uploads = st.session_state.setdefault("processed_upload_file_ids", set())
+    added_ids = []
+    for uploaded in uploads or []:
+        upload_token = getattr(uploaded, "file_id", None)
+        if upload_token and upload_token in processed_uploads:
+            continue
+        data = uploaded.getvalue()
+        digest = hashlib.sha256(uploaded.name.encode("utf-8") + b"\0" + data).hexdigest()[:16]
+        if digest not in known_ids:
+            thumbnail_data = None
+            try:
+                with Image.open(io.BytesIO(data)) as im:
+                    thumb = im.convert("RGB")
+                    thumb.thumbnail((64, 64))
+                    thumb_buffer = io.BytesIO()
+                    thumb.save(thumb_buffer, format="JPEG", quality=75)
+                    thumbnail_data = thumb_buffer.getvalue()
+            except Exception:
+                pass
+            items.append({"id": digest, "name": uploaded.name, "data": data, "thumbnail": thumbnail_data})
+            known_ids.add(digest)
+            added_ids.append(digest)
+        if upload_token:
+            processed_uploads.add(upload_token)
+    if added_ids and not st.session_state.get("selected_manager_file_id"):
+        st.session_state["selected_manager_file_id"] = added_ids[0]
+
+    if not items:
+        st.info("No files uploaded yet.")
+        return None, None
+
+    selected_id = st.session_state.get("selected_manager_file_id")
+    if selected_id not in known_ids:
+        selected_id = items[0]["id"]
+        st.session_state["selected_manager_file_id"] = selected_id
+
+    with st.container(height=620, border=True, key="file_manager_list"):
+        for index, item in enumerate(items, 1):
+            thumb_col, name_col, done_col = st.columns([0.8, 2.4, 0.8], vertical_alignment="center")
+            if item.get("thumbnail"):
+                thumb_col.image(Image.open(io.BytesIO(item["thumbnail"])), width=54)
+            else:
+                thumb_col.caption("No preview")
+            name_col.markdown(f"**{index}. {escape(item['name'])}**")
+            if name_col.button("Open", key=f"open_file_{item['id']}", width="stretch"):
+                st.session_state["selected_manager_file_id"] = item["id"]
+                selected_id = item["id"]
+            done_key = f"file_done_{item['id']}"
+            st.session_state.setdefault(done_key, False)
+            done_col.checkbox("Done", key=done_key, label_visibility="collapsed", help="Mark this page finished")
+
+    selected = next((item for item in items if item["id"] == selected_id), None)
+    if selected is None:
+        return None, None
+    return selected["data"], selected["name"]
+
+
+WORKSPACE_KEYS = ("sig", "result", "shown_img", "result_id", "region_records", "annotation_click_ids")
+
+
+def activate_file_workspace(file_id: str | None) -> None:
+    """Keep each uploaded page's detections and OCR in this session when switching pages."""
+    active_id = st.session_state.get("active_manager_file_id")
+    if active_id == file_id:
+        return
+    workspaces = st.session_state.setdefault("file_manager_workspaces", {})
+    if active_id and st.session_state.get("sig", (None,))[0] == "File manager":
+        workspaces[active_id] = {k: st.session_state[k] for k in WORKSPACE_KEYS if k in st.session_state}
+    for key in (*WORKSPACE_KEYS, "prepared_full_json", "active_crop_dialog"):
+        st.session_state.pop(key, None)
+    if file_id and file_id in workspaces:
+        st.session_state.update(workspaces[file_id])
+    st.session_state["active_manager_file_id"] = file_id
 
 
 def coord_rows(dets: list[dict], lang: str) -> list[dict]:
@@ -775,7 +1120,19 @@ def summary(image_name: str, lang: str) -> None:
         st.bar_chart(counts, horizontal=True, height=max(240, 28 * len(counts)))
 
     keys = list(results)
+    result_id = st.session_state.get("result_id", "")
+    ocr_on_now = st.session_state.get("ocr_on", True)
+    if ocr_on_now:
+        st.markdown("### 🧾 Gemini transcription")
+        st.caption(f"Model: {GEMINI_OCR_MODELS[st.session_state['gemini_model']]}. Every text region is sent once; "
+                   "images and advertisements are skipped.")
+        if st.button("Transcribe all regions", key=f"transcribe_all_{result_id}", type="primary"):
+            done, errors, total = transcribe_regions(results, page, result_id, "Preparing OCR")
+            st.success(f"Transcription finished: {done} completed, {errors} errors, {total} eligible regions.")
     tabs = st.tabs([f"{FUSION.icon if k == 'fusion' else MODELS[k].icon} {title_of(k)}" for k in keys])
+    context_key = hashlib.sha1(repr((st.session_state.get("sig"), result_id)).encode("utf-8")).hexdigest()[:12]
+    click_events = st.session_state.setdefault("annotation_click_ids", {})
+    page_image_b64 = b64_jpeg(page, 85)
     for tab, key in zip(tabs, keys):
         r = results[key]
         with tab:
@@ -803,10 +1160,30 @@ def summary(image_name: str, lang: str) -> None:
                     st.error("OCR needs EasyOCR: pip install easyocr")
                 bar.empty()
                 has_text = any("text" in d for d in r["dets"])
-            st.caption("💡 Click any box to download its cutout, read its coordinates"
-                       + (" or copy its text." if has_text else (". Use the OCR button to read the text inside each box."
-                                                             if ocr_on else ". OCR is switched off in the sidebar.")))
-            st.iframe(overlay_doc(page, r["dets"], lang, f"{image_name}_{key}"), height="content")
+            st.caption("💡 Click any box to open its cutout: coordinates, PNG download, ESPCN x2 upscale"
+                       + (" and Gemini OCR." if ocr_on else ". OCR is switched off in the sidebar."))
+            component_key = f"annotations_{context_key}_{key}"
+            click = annotation_view(
+                image_b64=page_image_b64, image_width=page.width, image_height=page.height,
+                detections=[{
+                    "box": [float(v) for v in d["box"]], "label": d["label"], "name": tr(lang, d["label"]),
+                    "conf": float(d["conf"]), "color": color_of(d),
+                    "transcribed": bool(d.get("text")) or bool(
+                        (rec := st.session_state.get("region_records", {}).get(region_record_key(result_id, key, n)))
+                        and rec.get("ocr", {}).get("status") == "complete"),
+                } for n, d in enumerate(r["dets"])],
+                key=component_key, default=None)
+            if isinstance(click, dict) and click.get("nonce") != click_events.get(component_key):
+                index = click.get("index")
+                if isinstance(index, int) and 0 <= index < len(r["dets"]):
+                    click_events[component_key] = click["nonce"]
+                    bounds = crop_bounds(page, r["dets"][index]["box"])
+                    st.session_state["active_crop_dialog"] = {
+                        "model_title": title_of(key), "number": index + 1, "detection": r["dets"][index],
+                        "bounds": bounds, "crop": page.crop(bounds) if bounds else None,
+                        "ocr_text_prefix": f"{context_key}_{key}_{index}", "result_id": result_id,
+                        "model_key": key, "detection_index": index, "name": image_name,
+                    }
             st.html(legend_html(lang, {d["label"] for d in r["dets"]}))
             buf = io.BytesIO()
             annotate_png(page, r["dets"]).save(buf, "PNG")
@@ -817,8 +1194,29 @@ def summary(image_name: str, lang: str) -> None:
                 c3.download_button("⬇ Extracted text (TXT)", txt, f"{image_name}_{key}.txt", "text/plain", key=f"dt_{key}")
             payload = json.dumps(detections_json(r["dets"], page.size, lang, image_name), indent=2, ensure_ascii=False)
             c2.download_button("⬇ Detections (JSON)", payload, f"{image_name}_{key}.json", "application/json", key=f"dj_{key}")
+            if key == "fusion" and has_text:
+                masthead = next((d["text"] for d in r["dets"] if d.get("source_label", d["label"]) == "flag" and d.get("text")), "")
+                st.download_button("📰 Download newspaper as HTML (news site, from Ensemble Fusion)",
+                                   news_html([{**d, "label": d.get("source_label", d["label"])} for d in r["dets"]], image_name, masthead), f"{image_name}_news.html", "text/html",
+                                   key="dn_fusion", type="primary")
             with st.expander(f"📐 Coordinates of all {len(r['dets'])} boxes (pixels, top-left origin)"):
                 st.dataframe(coord_rows(r["dets"], lang), width="stretch", hide_index=True)
+
+
+    active_dialog = st.session_state.get("active_crop_dialog")
+    if active_dialog:
+        show_detection_crop(**active_dialog)
+
+    st.markdown("### 📦 Full page cutout data")
+    st.caption("Coordinates, source and grouped classes, confidence, a crop of every region and its Gemini OCR record."
+               + (" Preparing it runs OCR once for each text region not already processed." if ocr_on_now else ""))
+    if st.button("Prepare full JSON export", key="prepare_full_json"):
+        if ocr_on_now:
+            transcribe_regions(results, page, result_id, "Preparing OCR and cutout data")
+        st.session_state["prepared_full_json"] = full_export(results, page, result_id, image_name, lang)
+    if st.session_state.get("prepared_full_json"):
+        st.download_button("⬇ Download full JSON", st.session_state["prepared_full_json"],
+                           f"{image_name}_cutouts.json", "application/json", key="download_full_json")
 
 
 # ----------------------------------------------------------------------------
@@ -829,47 +1227,73 @@ def main() -> None:
         st.session_state.setdefault(k, v)
     st.html(CSS)
     st.html('<div class="hero"><h1>IndicDLP Live Layout Studio</h1>'
-            '<p>Drop in a document page and watch YOLOv10x and DocLayout-YOLO read its layout, region by region, in English and Bengali.</p></div>')
+            '<p>Upload pages in the file manager and watch YOLOv10x and DocLayout-YOLO read each layout, region by region, '
+            'in English and 11 Indic languages.</p></div>')
     cfg = sidebar()
     lang = st.session_state["lang"]
 
-    image: Image.Image | None = None
-    name = "document"
-    up = st.file_uploader("Upload a document page", type=["png", "jpg", "jpeg", "bmp", "webp"])
-    if up is not None:
-        try:
-            image = Image.open(up).convert("RGB")
-            name = Path(up.name).stem
-        except Exception:
-            st.error("That file couldn't be read as an image.")
+    workspace_col, manager_col = st.columns([3.5, 1.2], gap="large")
+    with manager_col:
+        selected_file_data, selected_file_name = file_manager_panel()
 
-    if image is None:
-        st.info("⬆️ Upload a page to begin.")
-        return
-    if not cfg["models"]:
-        st.warning("Enable at least one model in the sidebar.")
-        return
+    with workspace_col:
+        examples = list_examples()
+        src = st.radio("Source", ["File manager", "Sample gallery"], horizontal=True, label_visibility="collapsed")
+        activate_file_workspace(st.session_state.get("selected_manager_file_id") if src == "File manager" else None)
+        image: Image.Image | None = None
+        name = "document"
+        if src == "File manager":
+            if selected_file_data is not None:
+                try:
+                    image = Image.open(io.BytesIO(selected_file_data)).convert("RGB")
+                    name = Path(selected_file_name or "document").stem
+                except Exception:
+                    st.error("That file couldn't be read as an image.")
+            else:
+                st.info("⬆️ Upload one or more pages in the File manager on the right.")
+        elif examples:
+            pick = st.selectbox("Sample page", list(examples), index=0)
+            image = Image.open(examples[pick]).convert("RGB")
+            name = pick
+        else:
+            st.warning("No sample images found.")
 
-    preview, _ = fit(image, 700)
-    c1, c2 = st.columns([1, 1.2], gap="large")
-    c1.image(preview, caption=f"{name} · {image.width}×{image.height}px", width="stretch")
-    with c2:
-        st.markdown("#### Ready to analyse")
-        st.write(f"**Models:** {', '.join(MODELS[k].title for k in cfg['models'])}"
-                 + (" + Ensemble Fusion" if cfg["fuse"] and len(cfg["models"]) > 1 else ""))
-        st.write(f"**Confidence ≥** {cfg['conf']:.2f} · **IoU** {cfg['iou']:.2f} · **Size** {cfg['imgsz']}px"
-                 + (" · **multi-scale**" if cfg["boost"] else ""))
-        go = st.button("🚀 Scan & detect", type="primary", width="stretch")
+        if image is None:
+            return
+        if not cfg["models"]:
+            st.warning("Enable at least one model in the sidebar.")
+            return
 
-    sig = (name, image.size, tuple(cfg["models"]), cfg["conf"], cfg["iou"], cfg["imgsz"], cfg["boost"], cfg["fuse"])
-    if go:
-        st.session_state["result"] = None
-        st.session_state["sig"] = sig
-        st.divider()
-        analyse(image, cfg, lang)
-        st.balloons()
-    if st.session_state.get("sig") == sig:
-        summary(name, lang)
+        preview, _ = fit(image, 700)
+        c1, c2 = st.columns([1, 1.2], gap="large")
+        c1.image(preview, caption=f"{name} · {image.width}×{image.height}px", width="stretch")
+        with c2:
+            st.markdown("#### Ready to analyse")
+            st.write(f"**Models:** {', '.join(MODELS[k].title for k in cfg['models'])}"
+                     + (" + Ensemble Fusion" if cfg["fuse"] and len(cfg["models"]) > 1 else ""))
+            st.write(f"**Confidence ≥** {cfg['conf']:.2f} · **IoU** {cfg['iou']:.2f} · **Size** {cfg['imgsz']}px"
+                     + (" · **multi-scale**" if cfg["boost"] else "")
+                     + (" · **6 simplified classes**" if cfg["simplify"] else ""))
+            go = st.button("🚀 Scan & detect", type="primary", width="stretch")
+
+        sig = (src, name, image.size, image_fingerprint(image), tuple(cfg["models"]), cfg["conf"], cfg["iou"],
+               cfg["imgsz"], cfg["boost"], cfg["fuse"], cfg["simplify"])
+        stale = ("shown_img", "sig", "annotation_click_ids", "result_id", "active_crop_dialog", "region_records",
+                 "prepared_full_json")
+        if st.session_state.get("sig") != sig:
+            st.session_state["result"] = None
+            for k in stale:
+                st.session_state.pop(k, None)
+        if go:
+            st.session_state["result"] = None
+            for k in stale:
+                st.session_state.pop(k, None)
+            st.session_state["sig"] = sig
+            st.divider()
+            analyse(image, cfg, lang)
+            st.balloons()
+        if st.session_state.get("sig") == sig:
+            summary(name, lang)
 
 
 main()

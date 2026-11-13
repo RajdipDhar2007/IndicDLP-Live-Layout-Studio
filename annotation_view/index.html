@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    html, body { margin: 0; background: transparent; }
+    #root { width: 100%; }
+    .page { position: relative; width: 100%; line-height: 0; overflow: hidden; border-radius: 14px;
+      border: 1px solid #2a2f5a; box-shadow: 0 0 30px rgba(124,58,237,.25); }
+    .page-image { display: block; width: 100%; height: auto; }
+    .region { position: absolute; box-sizing: border-box; padding: 0; border: 2px solid var(--region-color);
+      background: color-mix(in srgb, var(--region-color) 16%, transparent); cursor: pointer; }
+    .region:hover, .region:focus-visible { z-index: 2; outline: none;
+      background: color-mix(in srgb, var(--region-color) 40%, transparent); }
+    .region-label { position: absolute; left: -2px; bottom: 100%; padding: 2px 6px; border-radius: 3px 3px 0 0;
+      background: var(--region-color); color: #0a0b1a; font: 700 13px/1.35 'Segoe UI', sans-serif;
+      white-space: nowrap; }
+    .region.top-edge .region-label { top: 0; bottom: auto; border-radius: 0 0 3px 0; }
+    .region-tick { position: absolute; top: 2px; right: 2px; z-index: 1; display: grid; place-items: center;
+      width: 17px; height: 17px; border-radius: 50%; background: #16a34a; color: #fff;
+      font: 700 12px/1 'Segoe UI', sans-serif; box-shadow: 0 1px 5px #0009; }
+    .page.dense .region.paragraph .region-label { display: none; }
+    .page.dense .region.paragraph:hover .region-label,
+    .page.dense .region.paragraph:focus-visible .region-label { display: block; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="component.js"></script>
+</body>
+</html>

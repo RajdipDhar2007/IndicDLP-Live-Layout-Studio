@@ -8,8 +8,10 @@ ensemble-boxes>=1.0.9    # box fusion for the multi-scale boost and Ensemble Fus
 huggingface_hub          # imported by doclayout-yolo
 pillow>=10
 numpy
-opencv-python
-easyocr                  # text extraction (OCR) for Bengali and English
+opencv-contrib-python   # cv2.dnn_superres for the ESPCN x2 crop upscaler
+easyocr                  # offline text extraction (OCR) for Bengali and English
+google-genai             # per-region Gemini OCR
+python-dotenv            # reads GEMINI_API_KEY from a local .env file
 
 # PyTorch is NOT listed on purpose: install the build that matches your hardware first, see README.md.
 #   NVIDIA GPU (CUDA 12.8):  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128

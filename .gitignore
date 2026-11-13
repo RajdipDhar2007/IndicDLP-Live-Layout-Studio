@@ -14,3 +14,6 @@ weights/
 
 # Local secrets (API keys), never commit
 .streamlit/secrets.toml
+
+# Local environment file with API keys, never commit
+.env
