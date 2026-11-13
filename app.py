@@ -15,6 +15,7 @@ import io
 import json
 import math
 import os
+import statistics
 import time
 import urllib.error
 import urllib.request
@@ -829,10 +830,12 @@ def ensure_region_ocr(result_id: str, model_key: str, index: int, detection: dic
         "ocr": {"attempted": True, "status": "pending", "model": model_name, "text": "", "error": None},
     }
     records[record_key] = record
+    t0 = time.perf_counter()
     try:
         record["ocr"].update(status="complete", text=gemini_ocr(buf.getvalue(), detection["label"], model_name))
     except Exception as exc:
         record["ocr"].update(status="error", error=str(exc))
+    record["ocr"]["elapsed_s"] = round(time.perf_counter() - t0, 3)
     return record
 
 
@@ -1097,6 +1100,56 @@ def detections_json(dets: list[dict], size: tuple[int, int], lang: str, source: 
                 count=len(out), detections=out)
 
 
+def benchmark_rows() -> list[dict]:
+    """Model benchmark table: published mAP plus the measurements stored in benchmark_results.json (see benchmark.py)."""
+    path = ROOT / "benchmark_results.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))["models"]
+    except (OSError, ValueError, KeyError):
+        data = {}
+    rows = []
+    for title, spec in [(m.title, m) for m in MODELS.values()] + [(FUSION.title, FUSION)]:
+        b = data.get(title, {})
+        lat = b.get("t1") or b.get("t") or []
+        boost = b.get("tb") or b.get("t") or []
+        med = lambda v: round(statistics.median(v) * 1000) if v else None  # noqa: E731
+        rows.append({
+            "Model": title,
+            "mAP (published)": spec.map if spec.map != "-" else "-",
+            "Params (M)": b.get("params_m"),
+            "Weights (MB)": b.get("size_mb"),
+            "Latency / page (ms)": med(lat),
+            "With multi-scale (ms)": med(boost),
+            "Avg regions / page": round(statistics.mean(b["n"]), 1) if b.get("n") else None,
+            "Avg confidence": round(statistics.mean(b["conf"]), 3) if b.get("conf") else None,
+        })
+    return rows
+
+
+def ocr_benchmark_rows() -> list[dict]:
+    """OCR benchmark: EasyOCR from benchmark_results.json, Gemini measured live from this session's region requests."""
+    rows = []
+    try:
+        e = json.loads((ROOT / "benchmark_results.json").read_text(encoding="utf-8"))["easyocr"]
+        rows.append({"Engine": "EasyOCR (local, Bengali + English)", "Regions read": e["regions"],
+                     "Avg time / region (ms)": round(e["ms_per_region"]),
+                     "Avg time / page (s)": round(e["sec_per_page"], 1), "Errors": None,
+                     "Source": f"benchmark.py, {e['pages']} sample pages"})
+    except (OSError, ValueError, KeyError):
+        pass
+    by_model: dict[str, list[dict]] = {}
+    for rec in st.session_state.get("region_records", {}).values():
+        o = rec.get("ocr", {})
+        if o.get("attempted") and o.get("status") in ("complete", "error") and "elapsed_s" in o:
+            by_model.setdefault(o["model"], []).append(o)
+    for model, outs in by_model.items():
+        ok = [o["elapsed_s"] for o in outs if o["status"] == "complete"]
+        rows.append({"Engine": f"Gemini {model} (cloud, one request per region)", "Regions read": len(ok),
+                     "Avg time / region (ms)": round(statistics.mean(ok) * 1000) if ok else None,
+                     "Avg time / page (s)": None, "Errors": len(outs) - len(ok), "Source": "measured in this session"})
+    return rows
+
+
 def summary(image_name: str, lang: str) -> None:
     results = st.session_state.get("result")
     page = st.session_state.get("shown_img")
@@ -1110,6 +1163,19 @@ def summary(image_name: str, lang: str) -> None:
                      "Avg confidence": round(sum(x["conf"] for x in d) / len(d), 3) if d else 0.0,
                      "Time (ms)": round(r["elapsed"] * 1000)})
     st.dataframe(rows, width="stretch", hide_index=True)
+
+    st.markdown("#### Model benchmark")
+    st.caption("Published mAP (IndicDLP paper) and measured speed on the sample pages from `benchmark.py` "
+               "(median over pages, 1024 px, confidence 0.25).")
+    st.dataframe(benchmark_rows(), width="stretch", hide_index=True)
+
+    st.markdown("#### OCR benchmark")
+    st.caption("EasyOCR figures are from `benchmark.py`; Gemini rows fill in as you run OCR on regions in this session.")
+    ocr_rows = ocr_benchmark_rows()
+    if ocr_rows:
+        st.dataframe(ocr_rows, width="stretch", hide_index=True)
+    else:
+        st.info("No OCR timings yet. Run Gemini OCR on a region to see its speed here.")
 
     counts: dict[str, dict[str, int]] = {}
     for key, r in results.items():
