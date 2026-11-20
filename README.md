@@ -38,7 +38,7 @@ This project builds a web application, the Live Layout Studio, that puts two of 
 It adds multi-scale inference and Weighted Boxes Fusion to merge several passes or models into one prediction.
 It animates detection region by region, shows the 42 class names in English, Bengali and ten other Indic languages, and reads the text of each region with OCR (Gemini or EasyOCR).
 Multi-page PDFs can be processed as a batch, and results export as PNG, JSON, COCO JSON, PAGE-XML, HTML and text in reading order.
-No model was re-trained; the published checkpoints (57.7 and 54.5 mAP[50:95]) are used as they are.
+The published checkpoints (57.7 and 54.5 mAP[50:95]) are used as released, and one of them is also fine-tuned on annotated Bengali newspaper pages.
 On 50 held-out, human-annotated Bengali newspaper pages the ensemble reached 33.7 mAP[50:95] against 29.6 and 29.4 for the two boosted single models, at about 0.39 s per page on a GPU.
 The system makes layout detectors usable and inspectable, and its limits are listed for future work.
 
@@ -75,7 +75,7 @@ India has a very large body of Bengali and other Indic print, much of it archiva
 
 ### 2.4 Procedure used
 
-Two released detectors were wrapped so that both return the same record per region. Their outputs were combined by multi-scale inference and WBF. The results were put behind an interactive Streamlit interface with language switching, OCR and export. The pipeline was then benchmarked on sample pages and evaluated against 100 human-annotated newspaper pages. Section 4 gives the details.
+Two released detectors were wrapped so that both return the same record per region. Their outputs were combined by multi-scale inference and WBF. The results were put behind an interactive Streamlit interface with language switching, OCR and export. The pipeline was then benchmarked on sample pages, evaluated against 100 human-annotated newspaper pages, and one detector was fine-tuned on part of them. Section 4 gives the details.
 
 ### 2.5 Purpose
 
@@ -148,10 +148,11 @@ flowchart LR
 ### 4.4 Model selection, training and validation
 
 - **Model selection.** YOLOv10x and DocLayout-YOLO were chosen because the IndicDLP authors released checkpoints for them, and they are the two best-performing single-stage detectors in the paper's tables (57.7 and 54.5 mAP[50:95]).
-- **Training.** **No model was trained in this project.** The authors fine-tuned both from pretrained weights (YOLOv10x: UED-mini; DocLayout-YOLO: DocSynth-300K) with mosaic, scale and colour augmentation, and with flips and rotation switched off so text is never mirrored. Training and evaluation scripts for DocLayout-YOLO are included in `doclayout-yolo/`.
+- **Training.** **The released checkpoints were not re-trained from scratch; the only training done here is the Batch 06 fine-tune below.** The authors fine-tuned both from pretrained weights (YOLOv10x: UED-mini; DocLayout-YOLO: DocSynth-300K) with mosaic, scale and colour augmentation, and with flips and rotation switched off so text is never mirrored. Training and evaluation scripts for DocLayout-YOLO are included in `doclayout-yolo/`.
 - **Train / validation / test split.** The split is the dataset's own, taken from the region counts published with it: 1,465,652 training, 186,284 validation and 184,392 test regions (about 80 / 10 / 10 %). It was not changed here.
 - **Validation of this project's pipeline.** On the sample pages there is no ground truth, so speed, number and confidence of detections and agreement between models were measured (Sections 5.2). On Batch 06, accuracy is measured against human annotation (Section 5.4). Split: 50 even-numbered pages tune the fusion weights, the other 50 are held out; the detectors themselves are not trained on either.
-- **Not done.** No model was fine-tuned on the Batch 06 pages, no learned reading-order model was built, and no Bengali-specialised OCR was added (Section 6).
+- **Fine-tuning (done, one experiment).** `finetune_batch06.py` fine-tunes YOLOv10x from the IndicDLP checkpoint on 40 of the 50 even-numbered Batch 06 pages (10 more select the best checkpoint; 40 epochs, 1024 px, batch 2, no flips) with a new 10-class head, and scores it on the same 50 held-out pages as Section 5.4.
+- **Not done.** No learned reading-order model was built (the export has no human reading-order labels) and no Bengali-specialised OCR engine was added (none was installed; `evaluate_ocr.py` only measures EasyOCR).
 
 ### 4.5 Tools and code
 
@@ -166,6 +167,8 @@ flowchart LR
 | `benchmark.py` / `benchmark_results.json` | Speed and agreement benchmark and its output |
 | `evaluate_fusion.py`, `detmetrics.py` | Per-class AP evaluation and fusion-weight tuning (IndicDLP YOLO format or a Label Studio export) |
 | `batch06_evaluation_*.json/.md`, `batch06_fusion_weights.json` | Results of that evaluation on Batch 06 |
+| `finetune_batch06.py`, `batch06_finetune_results.json` | Fine-tuning of YOLOv10x on the annotated pages and its held-out scores |
+| `evaluate_ocr.py`, `batch06_ocr_results.json` | EasyOCR character error rate on the annotated regions |
 | `layout_order.py` | XY-cut reading order and reading-order text assembly |
 | `exports.py` | COCO JSON, PAGE-XML and HTML writers |
 | `pdfio.py` | PDF page rendering |
@@ -332,7 +335,44 @@ Weight 1.5 is best on the tuning pages (+1.7 over equal weights) but gives **no 
 
 **Caveats.** (1) The folder name and `run_ensemble.py` suggest the annotators corrected pre-annotations produced by this ensemble, which would favour the ensemble and its box geometry; the comparison with the single models is therefore optimistic for the ensemble. (2) Caption (22), Footer (2) and Flag (10) have too few held-out boxes for their AP to be reliable. (3) One newspaper and period only.
 
-### 5.5 Observations
+### 5.5 Fine-tuning on the annotated pages
+
+YOLOv10x fine-tuned on 40 Batch 06 pages (`weights/yolov10x_batch06_ft.pt`, not committed), scored on the same 50 held-out pages and with the same metric as Section 5.4:
+
+| Pipeline (50 held-out pages) | mAP50 | mAP[50:95] |
+|---|---|---|
+| Ensemble fusion of the two original models (Section 5.4) | 49.4 | 33.7 |
+| **Fine-tuned YOLOv10x, single scale** | 71.3 | 61.5 |
+| **Fine-tuned YOLOv10x, multi-scale boost** | 72.7 | 63.8 |
+
+| Class | GT boxes | AP[50:95], single | AP[50:95], boost |
+|---|---|---|---|
+| Headline | 683 | 84.2 | 86.0 |
+| Subtitle | 745 | 66.6 | 71.2 |
+| BodyText | 2963 | 90.3 | 91.4 |
+| Caption | 22 | 16.4 | 19.8 |
+| Image | 693 | 81.8 | 82.4 |
+| Header | 62 | 77.5 | 83.6 |
+| Footer | 2 | 0.0 | 0.0 |
+| Folio | 99 | 78.7 | 79.0 |
+| PageNumber | 71 | 36.2 | 36.3 |
+| Flag | 10 | 83.5 | 88.6 |
+
+The gain is very large on the previously weakest classes (Folio 6.0 to 78.7, Subtitle 10-12 to 67-71), but it must **not** be read as a general improvement of the detector: (1) the model is trained and tested on the same newspaper, period and annotation style; (2) it learns the 10-class annotation scheme directly, while the original models had their 42 classes folded onto it by an assumed mapping, which alone costs accuracy; (3) the held-out annotations probably began as the ensemble's output (Section 5.4). Caption, Footer and Flag have too few boxes to judge, and PageNumber stays low. Whether it generalises to other newspapers or to English pages was not tested, and it is a one-run result (seed 0, no repeats).
+
+### 5.6 OCR check (EasyOCR, Bengali + English)
+
+`evaluate_ocr.py` crops 150 random text regions of the held-out pages using the annotated boxes and compares EasyOCR's text with the transcription stored in the export (a Gemini transcription kept by the annotator, so a silver standard, not independent ground truth).
+
+| Measure | Value |
+|---|---|
+| Character error rate, all 150 regions | **73.1 %** |
+| Headline / Subtitle / BodyText | 60.1 % / 60.6 % / 74.0 % |
+| Median time per region (CPU) | 895 ms |
+
+EasyOCR is therefore poor on these archival Bengali scans: roughly three characters in four are wrong against the reference. Gemini remains the more accurate engine for this material; a Bengali-specialised OCR is still needed for an offline option. Reading order was not scored: the export's stored region order is the old heuristic's own output, so agreement with it (Kendall tau 0.79 for the old rule, 0.77 for the XY-cut) says nothing about which is better.
+
+### 5.7 Observations
 
 - The ensemble found about 65 % more regions per page than either single model (43.5 vs about 26), because the two models often disagree (only 63-67 % of one model's boxes are matched by the other) and WBF keeps a region when only one model finds it. Without ground truth we cannot say how many of the extra regions are correct, and some may be false positives or near-duplicates.
 - Mean confidence was almost unchanged (0.619 vs 0.612-0.615).
@@ -350,17 +390,19 @@ Weight 1.5 is best on the tuning pages (+1.7 over equal weights) but gives **no 
 - **Ensemble fusion increases coverage.** On the 11 sample pages it returned 478 regions against 284 and 289 for the single models, and kept 95.4 % and 99.7 % of their boxes. The two detectors agree on only about two thirds of their boxes, so they are complementary.
 - **The cost is acceptable.** About 0.39 s per page for the full boosted ensemble on a GPU, against 0.08-0.09 s for one model at one size.
 - **Fusion improves accuracy on annotated Bengali newspaper pages.** On 50 held-out pages, mAP[50:95] rose from 23.0 / 26.3 (single scale) to 29.6 / 29.4 with the multi-scale boost and to 33.7 with the ensemble. The gain is probably overstated because the annotations were likely started from this ensemble's output. On the IndicDLP test split the published figures are 57.7 (YOLOv10x) and 54.5 (DocLayout-YOLO); the new `evaluate_fusion.py` can repeat the evaluation there, but that dataset was not available here.
+- **Fine-tuning on in-domain annotated pages helps a lot, in that domain.** Fine-tuned YOLOv10x reached 61.5 mAP[50:95] (63.8 with the boost) against 33.7 for the ensemble of the original models on the same held-out pages, mainly through folio, subtitle and header. This is one newspaper, one run and one annotation scheme, so it shows the value of in-domain data rather than a general gain.
+- **EasyOCR is weak here** (73 % character error rate against the stored transcription), so offline Bengali OCR remains an open problem.
 - **Per-model fusion weights did not generalise.** The best weights on the tuning pages (1.0 / 1.5) gave +1.7 mAP there and +0.0 on the held-out pages, so equal weights are kept.
 - **Weak spots are consistent.** Small page furniture, hierarchical classes (headline, list and question levels) and rare classes get the lowest confidence, and a small advertisement was misclassified in Demo 2.
 
-**Limitations.** Rectangular boxes only; the reading order is a geometric XY-cut, not a learned model (it can fail on interleaved or overlapping boxes), and it has not been scored against human reading-order labels; the OCR text is assembled in that order but uses the same general OCR engines (no Bengali-specialised OCR was added); PDFs are rendered at 150 dpi and capped at 200 pages; Bengali and Indic label translations need native-speaker review; no model was trained here; the speed-benchmark pages carry no ground truth and include two non-page images; the accuracy evaluation covers one newspaper from one period with 10 coarse classes; EasyOCR is slow (518 ms per region); Gemini OCR sends region images to Google.
+**Limitations.** Rectangular boxes only; the reading order is a geometric XY-cut, not a learned model (it can fail on interleaved or overlapping boxes), and it has not been scored against human reading-order labels; the OCR text is assembled in that order but uses the same general OCR engines (no Bengali-specialised OCR was added); PDFs are rendered at 150 dpi and capped at 200 pages; Bengali and Indic label translations need native-speaker review; the two released detectors were not re-trained on IndicDLP (only one fine-tune on 40 newspaper pages was run); the speed-benchmark pages carry no ground truth and include two non-page images; the accuracy evaluation covers one newspaper from one period with 10 coarse classes; EasyOCR is slow (518 ms per region); Gemini OCR sends region images to Google.
 
 **Recommendations for future work**
 
 1. Run `evaluate_fusion.py` on the IndicDLP validation and test splits (per-class AP over all 42 classes) and re-tune the fusion weights there; the weights tuned on 50 newspaper pages did not generalise.
 2. Obtain independently annotated pages (not started from the ensemble's output) so the fusion gain can be measured without bias, and add a significance test.
-3. Replace the XY-cut with a learned reading-order model, evaluate it against human reading-order labels, and add a Bengali-specialised OCR.
-4. Fine-tune the detectors on the 100 annotated Bengali archival pages (and more) to improve small and hierarchical classes such as folio, page number, subtitle and caption.
+3. Collect human reading-order labels, evaluate the XY-cut against them and train a learned reading-order model; add and evaluate a Bengali-specialised OCR (EasyOCR's 73 % error rate is the baseline to beat).
+4. Test the fine-tuned detector on other newspapers and on English pages, repeat with several seeds, and merge the 10-class scheme back into the 42-class output (or fine-tune all 42 classes) so the app can offer it next to the original models.
 5. Add per-page quality controls to the batch mode (retry, resume, per-page settings) and larger PDF support.
 
 ---
