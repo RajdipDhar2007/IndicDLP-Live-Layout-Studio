@@ -19,6 +19,18 @@ PAGE_NS = "http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15"
 CREATOR = "IndicDLP Live Layout Studio"
 
 
+# Pictures and advertisements: left out of exports when the user chooses so (sidebar: "Leave out images and ads").
+MEDIA_CLASSES = {"figure", "advertisement", "image"}
+
+
+def is_media(d: dict) -> bool:
+    return d.get("source_label", d["label"]) in MEDIA_CLASSES or d["label"] in MEDIA_CLASSES
+
+
+def without_media(dets: list[dict]) -> list[dict]:
+    return [d for d in dets if not is_media(d)]
+
+
 def _src(d: dict) -> str:
     return d.get("source_label", d["label"])
 

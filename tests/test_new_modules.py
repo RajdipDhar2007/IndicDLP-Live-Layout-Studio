@@ -138,3 +138,12 @@ def test_pdf_pages_become_pngs():
     assert [n for n, _ in pages] == ["scan_p001.png", "scan_p002.png", "scan_p003.png"]
     assert all(b[:8] == b"\x89PNG\r\n\x1a\n" for _, b in pages)
     assert pdfio.page_count(doc.tobytes()) == 3
+
+
+# --- images and advertisements are left out of exports ------------------------
+def test_without_media_drops_figures_ads_and_simplified_images():
+    dets = [det((0, 0, 10, 10), "paragraph"), det((0, 0, 10, 10), "figure"),
+            {**det((0, 0, 10, 10), "paragraph"), "label": "image", "source_label": "figure"},
+            {**det((0, 0, 10, 10), "paragraph"), "label": "advertisement", "source_label": "advertisement"}]
+    kept = exports.without_media(dets)
+    assert len(kept) == 1 and kept[0]["label"] == "paragraph"

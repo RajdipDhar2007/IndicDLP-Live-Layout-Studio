@@ -54,7 +54,7 @@ EXAMPLE_DIRS = [ROOT / "data" / "examples", ROOT / "fig" / "images"]
 annotation_view = components.declare_component("indicdlp_annotation_view", path=str(ROOT / "annotation_view"))
 ZENODO = "https://zenodo.org/records/15881917/files/{}?download=1"
 DEFAULTS = dict(ocr_on=True, ocr_engine="gemini", conf=0.25, iou=0.70, imgsz=1024, speed="Normal", boost=True, fuse=True, lang="en",
-                gemini_model="Gemini 3.1 Flash-Lite (faster)", simplify=False)
+                gemini_model="Gemini 3.1 Flash-Lite (faster)", simplify=False, skip_media=True)
 
 st.set_page_config(page_title="IndicDLP Live Layout Studio", page_icon="📄", layout="wide")
 
@@ -602,6 +602,8 @@ def sidebar() -> dict:
         st.markdown("##### 🌐 Region names")
         st.selectbox("Language", list(LANGS), format_func=lambda k: LANGS[k], key="lang",
                      help="Class names in the feed, chips, legend, tables and the final annotated page.")
+        st.toggle("Leave out images and ads in exports", key="skip_media",
+                  help="JSON, COCO, PAGE-XML, HTML, text, cutouts and batch ZIPs skip figure and advertisement regions. The annotated PNG and the on-screen boxes still show them.")
         st.toggle("Simplified classes", key="simplify",
                   help="Folds the 42 classes into 6 families: headline, subtitle, paragraph, image, caption, advertisement.")
         st.divider()
@@ -731,10 +733,16 @@ def detect_headless(image: Image.Image, cfg: dict, device: str) -> dict[str, dic
     return results
 
 
+def export_dets(dets: list[dict]) -> list[dict]:
+    """Regions to write to export files: images and advertisements are dropped when the sidebar toggle is on."""
+    return exports.without_media(dets) if st.session_state.get("skip_media", True) else dets
+
+
 def batch_zip(pages: list[dict], lang: str, result_key: str) -> bytes:
     """One ZIP for a batch: per page JSON, PAGE-XML and TXT, plus one COCO file and one HTML file for all pages."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        pages = [{**pg, "dets": export_dets(pg["dets"])} for pg in pages]
         for pg in pages:
             stem = Path(pg["name"]).stem
             z.writestr(f"json/{stem}.json", json.dumps(detections_json(pg["dets"], (pg["width"], pg["height"]), lang, stem),
@@ -1041,7 +1049,10 @@ def full_export(results: dict, page: Image.Image, result_id: str, image_name: st
     models = {}
     for mk, result in results.items():
         regions = []
+        skip = st.session_state.get("skip_media", True)
         for i, d in enumerate(result["dets"]):
+            if skip and exports.is_media(d):
+                continue
             bounds = crop_bounds(page, d["box"])
             record = records.get(region_record_key(result_id, mk, i))
             x1, y1, x2, y2 = bounds or (0, 0, 0, 0)
@@ -1363,9 +1374,9 @@ def summary(image_name: str, lang: str) -> None:
             c1, c2, c3 = st.columns(3)
             c1.download_button("⬇ Annotated image (PNG)", buf.getvalue(), f"{image_name}_{key}.png", "image/png", key=f"dp_{key}")
             if has_text:
-                txt = assemble_text(r["dets"], page.size)  # text of all regions in reading order
+                txt = assemble_text(export_dets(r["dets"]), page.size)  # text of all regions in reading order
                 c3.download_button("⬇ Extracted text (TXT, reading order)", txt, f"{image_name}_{key}.txt", "text/plain", key=f"dt_{key}")
-            export_page = dict(name=f"{image_name}.png", width=page.width, height=page.height, dets=r["dets"], image=page)
+            export_page = dict(name=f"{image_name}.png", width=page.width, height=page.height, dets=export_dets(r["dets"]), image=page)
             e1, e2, e3 = st.columns(3)
             e1.download_button("⬇ COCO JSON", exports.coco_json([export_page], CLASS_NAMES), f"{image_name}_{key}_coco.json",
                                "application/json", key=f"dc_{key}")
@@ -1373,7 +1384,7 @@ def summary(image_name: str, lang: str) -> None:
                                "application/xml", key=f"dx_{key}")
             e3.download_button("⬇ HTML (reading order)", exports.html_document([export_page], image_name),
                                f"{image_name}_{key}.html", "text/html", key=f"dh_{key}")
-            payload = json.dumps(detections_json(r["dets"], page.size, lang, image_name), indent=2, ensure_ascii=False)
+            payload = json.dumps(detections_json(export_dets(r["dets"]), page.size, lang, image_name), indent=2, ensure_ascii=False)
             c2.download_button("⬇ Detections (JSON)", payload, f"{image_name}_{key}.json", "application/json", key=f"dj_{key}")
             if key == "fusion" and has_text:
                 masthead = next((d["text"] for d in r["dets"] if d.get("source_label", d["label"]) == "flag" and d.get("text")), "")
