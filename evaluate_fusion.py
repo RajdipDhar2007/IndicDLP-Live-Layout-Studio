@@ -203,7 +203,7 @@ def main() -> int:
         tune_files, test_files = files[0::2], files[1::2]
         names, remap = LS_CLASSES, ls_remap(detector_names)
 
-        def gt_of(f, size):
+        def gt_of(f, _size):
             return load_ls_gt(f, a.ls_json)
         tune_gt_of = gt_of
         print(f"Label Studio export: {len(tune_files)} pages tune the weights, {len(test_files)} held-out pages are scored.")

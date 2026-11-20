@@ -72,13 +72,15 @@ def test_coco_uses_source_label_when_classes_are_simplified():
 def test_page_xml_parses_and_escapes():
     root = ET.fromstring(exports.page_xml(PAGE))
     ns = {"p": exports.PAGE_NS}
-    assert root.find("p:Page", ns).get("imageWidth") == "1000"
+    page = root.find("p:Page", ns)
+    assert page is not None and page.get("imageWidth") == "1000"
     refs = root.findall(".//p:RegionRefIndexed", ns)
     assert [r.get("regionRef") for r in refs] == ["r1", "r2", "r3"]
     assert root.find(".//p:ImageRegion", ns) is not None
     texts = [u.text for u in root.findall(".//p:Unicode", ns)]
     assert "body & <text>" in texts and "Title" in texts
-    assert root.find(".//p:TextRegion", ns).get("type") == "heading"
+    region = root.find(".//p:TextRegion", ns)
+    assert region is not None and region.get("type") == "heading"
 
 
 def test_html_document_escapes_and_orders():

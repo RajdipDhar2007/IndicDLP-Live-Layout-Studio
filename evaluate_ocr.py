@@ -65,7 +65,7 @@ def main() -> int:
         crop = im.crop((max(0, x1 - 4), max(0, y1 - 4), min(im.width, x2 + 4), min(im.height, y2 + 4)))
         t0 = time.perf_counter()
         try:
-            hyp = norm(" ".join(reader.readtext(np.array(crop), detail=0, paragraph=True)))
+            hyp = norm(" ".join(str(t) for t in reader.readtext(np.array(crop), detail=0, paragraph=True)))
         except Exception:
             hyp = ""
         secs.append(time.perf_counter() - t0)
