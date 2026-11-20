@@ -20,6 +20,8 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+import zipfile
+import zipfile
 from datetime import datetime
 from dataclasses import dataclass
 from html import escape
@@ -30,6 +32,12 @@ import streamlit.components.v1 as components
 from PIL import Image, ImageDraw, ImageFont
 
 from i18n import LANGS, label as _tr
+import exports
+import pdfio
+from layout_order import assemble_text, reading_order as _order_regions
+import exports
+import pdfio
+from layout_order import assemble_text, reading_order as _order_regions
 from news import news_html
 
 try:
@@ -332,8 +340,9 @@ def predict_once(key: str, image: Image.Image, conf: float, iou: float, imgsz: i
             for (x1, y1, x2, y2), c, k in zip(res.boxes.xyxy.tolist(), res.boxes.conf.tolist(), res.boxes.cls.tolist())]
 
 
-def fuse(det_lists: list[list[dict]], size: tuple[int, int], conf: float, iou_thr: float = 0.55) -> list[dict]:
-    """Weighted box fusion across several detection lists (scales or models)."""
+def fuse(det_lists: list[list[dict]], size: tuple[int, int], conf: float, iou_thr: float = 0.55,
+         weights: list[float] | None = None) -> list[dict]:
+    """Weighted box fusion across several detection lists (scales or models), optionally with one weight per list."""
     from ensemble_boxes import weighted_boxes_fusion
     w, h = size
     boxes, scores, labels = [], [], []
@@ -341,7 +350,7 @@ def fuse(det_lists: list[list[dict]], size: tuple[int, int], conf: float, iou_th
         boxes.append([[min(max(v / s, 0.0), 1.0) for v, s in zip(d["box"], (w, h, w, h))] for d in dets] or [[0, 0, 0, 0]])
         scores.append([d["conf"] for d in dets] or [0.0])
         labels.append([d["cls"] for d in dets] or [0])
-    fb, fs, fl = weighted_boxes_fusion(boxes, scores, labels, iou_thr=iou_thr, skip_box_thr=conf, conf_type="max")
+    fb, fs, fl = weighted_boxes_fusion(boxes, scores, labels, weights=weights, iou_thr=iou_thr, skip_box_thr=conf, conf_type="max")
     out = []
     for (x1, y1, x2, y2), s, k in zip(fb, fs, fl):
         k = int(k)
@@ -349,8 +358,19 @@ def fuse(det_lists: list[list[dict]], size: tuple[int, int], conf: float, iou_th
     return out
 
 
-def reading_order(dets: list[dict]) -> list[dict]:
-    return sorted(dets, key=lambda d: (round(d["box"][1] / 40), d["box"][0]))
+def reading_order(dets: list[dict], size: tuple[int, int] | None = None) -> list[dict]:
+    """Recursive XY-cut: stacked sections top to bottom, columns left to right (see layout_order.py)."""
+    return _order_regions(dets, size)
+
+
+def tuned_fusion_weights(model_keys: list[str]) -> list[float] | None:
+    """Per-model fusion weights written by evaluate_fusion.py (fusion_weights.json), if present and complete."""
+    f = ROOT / "fusion_weights.json"
+    try:
+        w = json.loads(f.read_text())
+        return [float(w[k]) for k in model_keys]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
 
 
 def run_model(key: str, image: Image.Image, cfg: dict, device: str) -> tuple[list[dict], float]:
@@ -360,7 +380,7 @@ def run_model(key: str, image: Image.Image, cfg: dict, device: str) -> tuple[lis
         scales.append(1280 if cfg["imgsz"] < 1280 else 1024)  # a second scale recovers small / faint regions
     passes = [predict_once(key, image, cfg["conf"], cfg["iou"], s, device) for s in scales]
     dets = fuse(passes, image.size, cfg["conf"], 0.6) if len(passes) > 1 else passes[0]
-    return relabel(reading_order(dets), cfg.get("simplify", False)), time.perf_counter() - t0
+    return relabel(reading_order(dets, image.size), cfg.get("simplify", False)), time.perf_counter() - t0
 
 
 # ----------------------------------------------------------------------------
@@ -685,8 +705,9 @@ def analyse(image: Image.Image, cfg: dict, lang: str) -> None:
     if cfg["fuse"] and len(results) >= 2:
         def fused():
             t0 = time.perf_counter()
-            dets = fuse([r["dets"] for r in results.values()], image.size, cfg["conf"], 0.55)
-            return relabel(reading_order(dets), cfg.get("simplify", False)), sum(r["elapsed"] for r in results.values()) + time.perf_counter() - t0
+            dets = fuse([r["dets"] for r in results.values()], image.size, cfg["conf"], 0.55,
+                        tuned_fusion_weights(list(results)))
+            return relabel(reading_order(dets, image.size), cfg.get("simplify", False)), sum(r["elapsed"] for r in results.values()) + time.perf_counter() - t0
         r = reveal(FUSION, fused, shown_img, scale, cfg, lang, device)
         if r:
             results["fusion"] = r
@@ -694,6 +715,82 @@ def analyse(image: Image.Image, cfg: dict, lang: str) -> None:
     st.session_state["result"] = results
     st.session_state["shown_img"] = image.copy()  # full-resolution page for exports and crop previews
     st.session_state["result_id"] = uuid.uuid4().hex
+
+
+def detect_headless(image: Image.Image, cfg: dict, device: str) -> dict[str, dict]:
+    """The same detection as `analyse`, without the animation: {model key or "fusion": {"dets", "elapsed"}}."""
+    results: dict[str, dict] = {}
+    for key in cfg["models"]:
+        dets, elapsed = run_model(key, image, cfg, device)
+        results[key] = dict(dets=dets, elapsed=elapsed)
+    if cfg["fuse"] and len(results) >= 2:
+        t0 = time.perf_counter()
+        dets = fuse([r["dets"] for r in results.values()], image.size, cfg["conf"], 0.55, tuned_fusion_weights(list(results)))
+        results["fusion"] = dict(dets=relabel(reading_order(dets, image.size), cfg.get("simplify", False)),
+                                 elapsed=sum(r["elapsed"] for r in results.values()) + time.perf_counter() - t0)
+    return results
+
+
+def batch_zip(pages: list[dict], lang: str, result_key: str) -> bytes:
+    """One ZIP for a batch: per page JSON, PAGE-XML and TXT, plus one COCO file and one HTML file for all pages."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for pg in pages:
+            stem = Path(pg["name"]).stem
+            z.writestr(f"json/{stem}.json", json.dumps(detections_json(pg["dets"], (pg["width"], pg["height"]), lang, stem),
+                                                       indent=2, ensure_ascii=False))
+            z.writestr(f"page_xml/{stem}.xml", exports.page_xml(pg))
+            text = assemble_text(pg["dets"], (pg["width"], pg["height"]))
+            if text:
+                z.writestr(f"text/{stem}.txt", text)
+        z.writestr("annotations_coco.json", exports.coco_json(pages, CLASS_NAMES))
+        z.writestr("layout.html", exports.html_document(pages, f"Batch export ({result_key})"))
+    return buf.getvalue()
+
+
+def batch_panel(cfg: dict, lang: str) -> None:
+    """Runs every page in the file manager (no animation) and offers one ZIP with all export formats."""
+    items = st.session_state.get("file_manager_items", [])
+    if len(items) < 2 or not cfg["models"]:
+        return
+    with st.expander(f"📚 Batch: process all {len(items)} pages at once", expanded=False):
+        st.caption("Runs detection on every page in the file manager with the current sidebar settings (no animation) "
+                   "and builds one ZIP: per-page JSON, PAGE-XML and text, plus COCO JSON and HTML for the whole batch. "
+                   "Uses Ensemble Fusion when two models are on, otherwise the single model.")
+        with_ocr = False
+        if st.session_state.get("ocr_on", True):
+            with_ocr = st.toggle("Read the text of every region (OCR)", value=False, key="batch_ocr",
+                                 help="Slower: each page is OCR'd with the engine chosen in the sidebar.")
+        if st.button("▶ Run batch", key="run_batch", type="primary"):
+            device = device_name()
+            engine = st.session_state.get("ocr_engine", "gemini")
+            if with_ocr and engine == "gemini" and not gemini_key():
+                engine = "easyocr"
+            bar = st.progress(0.0, text="Starting…")
+            pages, failed, result_key = [], [], ""
+            for n, item in enumerate(items, 1):
+                bar.progress((n - 1) / len(items), text=f"Page {n}/{len(items)}: {item['name']}")
+                try:
+                    img = Image.open(io.BytesIO(item["data"])).convert("RGB")
+                    res = detect_headless(img, cfg, device)
+                    result_key = "fusion" if "fusion" in res else next(iter(res))
+                    dets = res[result_key]["dets"]
+                    if with_ocr:
+                        ocr_page(img, dets, device, None, engine)
+                    pages.append(dict(name=item["name"], width=img.width, height=img.height, dets=dets, image=None))
+                except Exception as exc:  # one bad page must not stop the batch
+                    failed.append(f"{item['name']}: {exc}")
+            bar.progress(1.0, text="Done")
+            if pages:
+                st.session_state["batch_result"] = dict(
+                    zip=batch_zip(pages, lang, title_of(result_key)), pages=len(pages),
+                    regions=sum(len(p["dets"]) for p in pages), failed=failed)
+        done = st.session_state.get("batch_result")
+        if done:
+            st.success(f"{done['pages']} pages, {done['regions']} regions.")
+            for f in done["failed"]:
+                st.warning(f)
+            st.download_button("⬇ Download batch ZIP", done["zip"], "layout_batch.zip", "application/zip", key="dl_batch_zip")
 
 
 def title_of(key: str) -> str:
@@ -998,7 +1095,7 @@ def file_manager_panel() -> tuple[bytes | None, str | None]:
     </style>""")
     st.markdown("### 🗂️ File manager")
     st.caption("Add batches; open a page to work on it.")
-    uploads = st.file_uploader("Add image files", type=["png", "jpg", "jpeg", "bmp", "webp"],
+    uploads = st.file_uploader("Add image or PDF files", type=["png", "jpg", "jpeg", "bmp", "webp", "pdf"],
                                accept_multiple_files=True, key="file_manager_uploads", label_visibility="collapsed")
     items = st.session_state.setdefault("file_manager_items", [])
     known_ids = {item["id"] for item in items}
@@ -1009,11 +1106,21 @@ def file_manager_panel() -> tuple[bytes | None, str | None]:
         if upload_token and upload_token in processed_uploads:
             continue
         data = uploaded.getvalue()
-        digest = hashlib.sha256(uploaded.name.encode("utf-8") + b"\0" + data).hexdigest()[:16]
-        if digest not in known_ids:
+        if uploaded.name.lower().endswith(".pdf"):  # every PDF page becomes its own item in the file manager
+            try:
+                sources = pdfio.pdf_to_pngs(data, uploaded.name)
+            except Exception as exc:
+                st.error(f"{uploaded.name}: could not be read as a PDF ({exc})")
+                sources = []
+        else:
+            sources = [(uploaded.name, data)]
+        for src_name, src_data in sources:
+            digest = hashlib.sha256(src_name.encode("utf-8") + b"\0" + src_data).hexdigest()[:16]
+            if digest in known_ids:
+                continue
             thumbnail_data = None
             try:
-                with Image.open(io.BytesIO(data)) as im:
+                with Image.open(io.BytesIO(src_data)) as im:
                     thumb = im.convert("RGB")
                     thumb.thumbnail((64, 64))
                     thumb_buffer = io.BytesIO()
@@ -1021,7 +1128,7 @@ def file_manager_panel() -> tuple[bytes | None, str | None]:
                     thumbnail_data = thumb_buffer.getvalue()
             except Exception:
                 pass
-            items.append({"id": digest, "name": uploaded.name, "data": data, "thumbnail": thumbnail_data})
+            items.append({"id": digest, "name": src_name, "data": src_data, "thumbnail": thumbnail_data})
             known_ids.add(digest)
             added_ids.append(digest)
         if upload_token:
@@ -1256,8 +1363,16 @@ def summary(image_name: str, lang: str) -> None:
             c1, c2, c3 = st.columns(3)
             c1.download_button("⬇ Annotated image (PNG)", buf.getvalue(), f"{image_name}_{key}.png", "image/png", key=f"dp_{key}")
             if has_text:
-                txt = "\n\n".join(f"[#{i} {d['label']}]\n{d['text']}" for i, d in enumerate(r["dets"], 1) if d.get("text"))
-                c3.download_button("⬇ Extracted text (TXT)", txt, f"{image_name}_{key}.txt", "text/plain", key=f"dt_{key}")
+                txt = assemble_text(r["dets"], page.size)  # text of all regions in reading order
+                c3.download_button("⬇ Extracted text (TXT, reading order)", txt, f"{image_name}_{key}.txt", "text/plain", key=f"dt_{key}")
+            export_page = dict(name=f"{image_name}.png", width=page.width, height=page.height, dets=r["dets"], image=page)
+            e1, e2, e3 = st.columns(3)
+            e1.download_button("⬇ COCO JSON", exports.coco_json([export_page], CLASS_NAMES), f"{image_name}_{key}_coco.json",
+                               "application/json", key=f"dc_{key}")
+            e2.download_button("⬇ PAGE-XML", exports.page_xml(export_page), f"{image_name}_{key}_page.xml",
+                               "application/xml", key=f"dx_{key}")
+            e3.download_button("⬇ HTML (reading order)", exports.html_document([export_page], image_name),
+                               f"{image_name}_{key}.html", "text/html", key=f"dh_{key}")
             payload = json.dumps(detections_json(r["dets"], page.size, lang, image_name), indent=2, ensure_ascii=False)
             c2.download_button("⬇ Detections (JSON)", payload, f"{image_name}_{key}.json", "application/json", key=f"dj_{key}")
             if key == "fusion" and has_text:
@@ -1324,6 +1439,7 @@ def main() -> None:
         else:
             st.warning("No sample images found.")
 
+        batch_panel(cfg, lang)
         if image is None:
             return
         if not cfg["models"]:

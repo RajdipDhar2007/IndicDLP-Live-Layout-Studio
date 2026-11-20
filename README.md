@@ -1,365 +1,397 @@
 <div align="center">
 
-# IndicDLP Live Layout Studio
+# &nbsp;
 
-### An interactive, multilingual system for document layout parsing of English and Bengali pages, with multi-scale inference and ensemble fusion of deep detectors
+*(Project title intentionally left blank)*
+
+**Rajdip Dhar**
+Computer Science and Engineering, Heritage Institute of Technology
+
+**Period of Internship:** 21st September 2026 - 30th November 2026
+
+Report submitted to: **IDEAS - Institute of Data Engineering, Analytics and Science Foundation, ISI Kolkata**
+
+**Project Mentor:** Dr. Sujoy Kumar Biswas
 
 </div>
 
 ---
 
-## Abstract
-
-Document layout parsing, the task of locating and classifying the structural regions of a page (headlines,
-paragraphs, figures, tables, page furniture and so on), is the first step of almost every document digitisation
-pipeline. For English and Bengali documents the task is difficult: the Bengali script is visually complex, pages are often
-multi-column and mixed-script, and a large share of archival material is degraded. The recent **IndicDLP** dataset
-and its fine-tuned detectors address this with 119,806 annotated pages and a
-42-class label schema, but the models are released as research checkpoints with no end-user interface.
-
-*The [Overview](#overview-how-the-system-works) explains in plain language what the models do, how they are trained,
-how they draw the boxes and which data they used.*
-
-This work presents **IndicDLP Live Layout Studio**, a web application that makes those detectors usable and
-inspectable. It (i) runs two state-of-the-art detectors (YOLOv10x and DocLayout-YOLO) behind one unified
-interface; (ii) adds a **multi-scale inference** stage and an **ensemble fusion** stage based on Weighted Boxes
-Fusion, which combine the outputs of several passes or several models into a single, more complete prediction;
-(iii) animates the detection process in real time so that the behaviour of each model can be observed region by
-region; and (iv) renders the 42 region classes in **English and Bengali**, with colour-coded, exportable results (annotated
-PNG, structured JSON and per-region cutouts that can be downloaded by clicking a box), and (v) reads the text inside
-each region with **OCR** (Gemini or EasyOCR, Bengali and English), which can be copied from the box or exported as JSON and plain text.
-
-**Keywords:** document layout analysis, Bengali script, object detection, YOLOv10, DocLayout-YOLO, OCR,
-weighted boxes fusion, English and Bengali user interface, Streamlit.
-
----
-
-## Overview: how the system works
-
-This overview is written to be understood without any background in computer vision or machine learning. The later
-sections go into more detail.
-
-### What problem does it solve?
-
-A scanned newspaper or textbook page is just a picture to a computer. It does not know that one block is a headline,
-another is a paragraph, another is a photograph and another is a page number. **Document layout analysis** means
-finding those blocks and naming them. The result is a list of **boxes**: each box is a rectangle on the page plus a
-label such as `headline`, `paragraph`, `figure` or `table`. This is usually the first step before reading the text,
-searching a library of scanned pages, or making pages accessible.
-
-This project is a web app. A page (English or Bengali) is uploaded, the app finds the boxes, draws them on the page
-one by one so the process can be watched, and shows the label of each box in English or Bengali.
-
-### What is the "model"?
-
-The model is a program called a **neural network**. Nobody wrote rules such as "big text at the top is a headline".
-Instead, the network is a huge list of numbers (called **weights**; the biggest model here has about 59 million of
-them) and a fixed recipe that combines the page's pixels with those numbers. With the right numbers the recipe turns a
-picture into boxes and labels. Finding the right numbers is called **training**.
-
-### How does the model learn? (training)
-
-Training works like teaching a child to spot headlines by showing thousands of marked-up pages.
-
-1. **Examples with answers.** We have many pages where people have already drawn the correct boxes and chosen the
-   correct label for each one. These are the *training pages*. The human-drawn boxes are the **ground truth**.
-2. **Guess.** The model looks at a training page, with its current numbers, and guesses boxes and labels. At the start
-   the numbers are not tuned yet, so the guesses are poor.
-3. **Compare.** A formula called the **loss** measures how wrong the guess was: boxes in the wrong place or the wrong
-   size, and wrong or missing labels all add to the loss.
-4. **Adjust.** An algorithm called gradient descent changes all the weights a tiny amount in the direction that makes
-   the loss smaller.
-5. **Repeat.** Steps 2 to 4 run on thousands of pages, over and over. One full pass over all training pages is an
-   **epoch**.
-6. **Check on pages it has never seen.** After each epoch the model is tested on separate *validation pages* that were
-   not used for learning. This shows whether it really learned the layout rules or just memorised the training pages.
-   The best-scoring version is saved and used by the app.
-
-Two things make training easier than starting from nothing:
-
-- **Pretraining.** Instead of random numbers, each model starts from numbers that were already trained on a very large
-  collection of other images. It already knows how to see edges, shapes and textures. Training on layout pages then
-  only has to teach it the new task.
-- **Augmentation.** Each training page is randomly altered a little each time (resized, recoloured, four pages tiled
-  into one picture). This makes the model robust. Flipping and rotating are switched off, because mirrored text would
-  never occur in real pages.
-
-### How does the model draw the boxes? (detection)
-
-On an uploaded page, the model works in one pass, in these steps:
-
-1. **Resize.** The page is scaled to a fixed size (1024 pixels on the long side by default).
-2. **Look at the picture in layers.** The first layers of the network pick out simple things such as edges and strokes.
-   Later layers combine them into letters, lines of text, columns, photographs and borders. The network keeps three
-   "views" of the page: a detailed one (good for small things such as page numbers), a medium one, and a coarse one
-   (good for big things such as a whole table).
-3. **Lay an invisible grid over each view.** At every square of the grid the model asks: *"Is the centre of some
-   region here? If so, how far is it from this square to the left, top, right and bottom edge of the region, and
-   which of the 42 labels is it?"* It answers with four distances (that is the box) and 42 scores, one per label.
-   A single page therefore produces thousands of candidate boxes, most of them with very low scores.
-4. **Pick the winners.** Several neighbouring squares often propose almost the same box. Older detectors remove the
-   duplicates with a step called **non-maximum suppression** (NMS): keep the highest-scoring box and delete any other
-   box that overlaps it too much. The newer models used here (YOLOv10-based) are trained so that only one box
-   per region ends up with a high score, so they need no NMS at all.
-5. **Keep the confident ones.** Each remaining box has a **confidence** from 0 to 1. Boxes below the confidence
-   threshold (0.25 in the app) are thrown away.
-6. **Output.** What is left is the final answer: for each region, the rectangle `(x1, y1, x2, y2)` in pixels, its
-   label, and its confidence. The app draws these on the page and can export them as an image and a JSON file.
-
-The two models are both members of the **YOLO** family ("You Only Look Once"), named for the fact that they find all
-boxes in one look at the page instead of searching region by region.
-
-### What data was used?
-
-**The dataset: IndicDLP.** A public collection of document pages (Nath et al., 2025; hosted on Hugging Face by AI4Bharat), built for exactly this task.
-As published, it has 119,806 page images from 12 kinds of document (novels, textbooks, magazines, laws, research
-papers, manuals, brochures, syllabi, question papers, notices, forms, newspapers), with 1,856,241 boxes drawn by human
-annotators using the open-source Shoonya tool. Every box is one of **42 labels**, listed in
-[Section 3.1](#31-the-42-region-classes). This project uses the English and Bengali interface only.
-
-**What each model learned from.** The models in this project did not all start the same way or see the same amount of
-data:
-
-| Model | Step 1: general pretraining | Step 2: layout training on IndicDLP |
-|---|---|---|
-| YOLOv10x | UED-mini, a pretraining set of about 75,000 human-annotated pages curated from the DocLayNet and M6Doc layout datasets, with 25 labels (as described in the IndicDLP paper) | The IndicDLP training pages, by the dataset's authors |
-| DocLayout-YOLO | DocSynth-300K, a collection of synthetic (computer-generated) layout pages (as stated in the IndicDLP paper) | The IndicDLP training pages, by the dataset's authors |
-
-The YOLOv10x and DocLayout-YOLO files are released checkpoints; this project downloads and uses them as they are,
-and the details above come from the checkpoint providers, not from re-training.
-
-### How is "how good" measured?
-
-- **IoU** (intersection over union) says how well a predicted box matches the human box: the overlapping area
-  divided by the total area covered by the two boxes. 1.0 is a perfect match and 0 means no overlap.
-- A prediction counts as correct if its label is right and its IoU is above a bar (for example 0.5).
-- **Precision** is the share of predicted boxes that are correct. **Recall** is the share of real boxes the model found.
-- **mAP** (mean average precision) combines both into one number per label, then averages over the 42 labels.
-  **mAP50** uses an IoU bar of 0.5; **mAP50-95** averages over bars from 0.5 to 0.95, so it also rewards tightly drawn
-  boxes. This is the figure quoted in this document. Higher is better.
-
-### What does the app add on top of the models?
-
-- **Two models in one place**, which can be switched on and off and compared.
-- **Multi-scale boost.** The same page is run through a model at two sizes and the two answers are merged, which
-  finds small or faint regions more often.
-- **Ensemble fusion.** The answers of several models are merged into one, using a method called Weighted Boxes Fusion
-  (overlapping boxes of the same label are averaged, weighted by confidence).
-- **Click a box for its cutout and coordinates.** On the results page, clicking any box opens a window with that
-  region's cutout, its pixel coordinates and a PNG download. The cutout can be sharpened with the **ESPCN x2**
-  super-resolution network, and its text can be read with **Gemini OCR** (one request per region, with a choice of
-  Gemini model). **Transcribe all regions** reads every text region in one go.
-- **File manager and sample gallery.** Several pages can be uploaded at once, opened one at a time and ticked off as
-  done; each page keeps its own detections and OCR while switching. A gallery of sample pages is built in.
-- **Simplified classes.** An optional toggle folds the 42 classes into six families (headline, subtitle, paragraph,
-  image, caption, advertisement) for a cleaner view.
-- **Full cutout export.** One JSON file with the coordinates, classes, confidence, a cropped image and the OCR text of
-  every region.
-- **Text extraction (OCR).** One button reads the text inside every text region (Bengali and English). The text appears
-  in the click prompt of each box, in the coordinate table, in the JSON export and in a plain-text download.
-- **Live reveal and multilingual labels.** The boxes appear one by one, and the label names can be switched between
-  English and 11 Indic languages (Hindi, Bengali, Assamese, Gujarati, Kannada, Malayalam, Marathi, Odia, Punjabi,
-  Tamil, Telugu) without running the model again.
-
-### Words used in this document
-
-| Word | Meaning |
-|---|---|
-| Model / network | The program with millions of tuned numbers that turns a page into boxes |
-| Weights / checkpoint | The tuned numbers / the file they are saved in |
-| Training, epoch | Tuning the numbers on example pages / one pass over all of them |
-| Ground truth | The correct boxes drawn by people |
-| Validation pages | Pages kept aside to test the model, never used to tune it |
-| Pretraining | Starting from numbers already tuned on other images |
-| Confidence | How sure the model is about a box, 0 to 1 |
-| NMS | Removing duplicate overlapping boxes |
-| IoU | Overlap between two boxes, 0 to 1 |
-| mAP | The overall accuracy score, higher is better |
-
----
-
 ## Contents
 
-0. [Overview: how the system works](#overview-how-the-system-works)
-1. [Introduction](#1-introduction)
-2. [Background and related work](#2-background-and-related-work)
-3. [Dataset and label schema](#3-dataset-and-label-schema)
-4. [System design](#4-system-design)
-5. [Methodology](#5-methodology)
-6. [Input and output specification](#6-input-and-output-specification)
-7. [Experiments and results](#7-experiments-and-results)
-8. [Installation and usage](#8-installation-and-usage)
-9. [Limitations and future work](#9-limitations-and-future-work)
-10. [Project structure](#10-project-structure)
-11. [References](#11-references)
+1. [Abstract](#1-abstract)
+2. [Introduction](#2-introduction)
+3. [Project Objective](#3-project-objective)
+4. [Methodology](#4-methodology)
+5. [Data Analysis and Results](#5-data-analysis-and-results)
+6. [Conclusion](#6-conclusion)
+7. [Appendices](#7-appendices)
 
 ---
 
-## 1. Introduction
+## 1. Abstract
 
-### 1.1 Problem statement
-
-Given a page image *I*, **layout parsing** produces a set of regions *R = {(bᵢ, cᵢ, sᵢ)}*, where *bᵢ = (x₁, y₁, x₂, y₂)* is
-an axis-aligned bounding box, *cᵢ* is a class from a fixed label set (here 42 classes) and *sᵢ ∈ [0, 1]* is a
-confidence score. The output is the structural skeleton on which later stages (OCR, reading-order recovery, table
-and figure extraction, accessibility tagging, search indexing) depend.
-
-### 1.2 Motivation
-
-- **Script diversity.** Models trained mostly on English scientific papers transfer poorly to Bengali pages.
-- **Domain diversity.** Newspapers, textbooks, exam papers, forms, notices and magazines have very different layouts.
-- **Degradation.** Archival scans show ink bleed, stains, skew and low contrast.
-- **Usability gap.** Research checkpoints are hard to run, compare and inspect. A researcher or archivist should be
-  able to drop in a page and see what each model finds, and why a prediction might be wrong.
-
-### 1.3 Contributions
-
-1. A **single web interface** over two detectors (YOLOv10x and DocLayout-YOLO) with automatic
-   detection of which models are installed and available.
-2. A **multi-scale inference** stage that fuses predictions from two input resolutions per model to recover small
-   and faint regions.
-3. An **ensemble fusion** stage that merges the predictions of all models with Weighted Boxes Fusion.
-4. A **live, animated reveal** of detections with a feed, counters and timing, intended for demonstration and for
-   building intuition about model behaviour.
-5. **Localised region names** for all 42 classes in English and Bengali, switchable without re-running
-   inference.
-6. **Export** of results as full-resolution annotated images and structured JSON, plus a per-model comparison table
-   and per-class statistics.
-7. **Click-to-cutout and coordinate inspection.** Clicking a box on the results page offers a PNG cutout of exactly
-   that region and shows its `x1, y1, x2, y2` pixel coordinates; the same numbers are listed in a table and in the JSON export.
-8. **OCR of detected regions.** Gemini (cloud, most accurate; needs an API key in the sidebar or the `GEMINI_API_KEY`
-   environment variable, and sends each region image to Google) or EasyOCR (local, offline) reads each text-bearing region (figures, tables, formulas,
-   advertisements, flags and placeholder text are skipped). The text is shown and copyable in the click prompt, added to
-   the coordinate table and the JSON export, and downloadable as a plain-text file.
+Document layout analysis locates and labels the regions of a page (headlines, paragraphs, figures, tables, page furniture), and it is the first step of almost every document-digitisation pipeline.
+For Bengali and English pages it is hard, because the Bengali script is complex, pages are multi-column and mixed-script, and archival scans are degraded.
+The public IndicDLP dataset (119,806 pages, 42 region classes) and its fine-tuned detectors solve the modelling part, but they are released only as research checkpoints with no user interface.
+This project builds a web application, the Live Layout Studio, that puts two of these detectors (YOLOv10x and DocLayout-YOLO) behind one interface.
+It adds multi-scale inference and Weighted Boxes Fusion to merge several passes or models into one prediction.
+It animates detection region by region, shows the 42 class names in English, Bengali and ten other Indic languages, and reads the text of each region with OCR (Gemini or EasyOCR).
+Multi-page PDFs can be processed as a batch, and results export as PNG, JSON, COCO JSON, PAGE-XML, HTML and text in reading order.
+No model was re-trained; the published checkpoints (57.7 and 54.5 mAP[50:95]) are used as they are.
+On 50 held-out, human-annotated Bengali newspaper pages the ensemble reached 33.7 mAP[50:95] against 29.6 and 29.4 for the two boosted single models, at about 0.39 s per page on a GPU.
+The system makes layout detectors usable and inspectable, and its limits are listed for future work.
 
 ---
 
-## 2. Background and related work
+## 2. Introduction
 
-**IndicDLP.** A foundational dataset for multi-lingual and multi-domain layout parsing, with detectors fine-tuned
-on it. This project uses the released YOLOv10x and DocLayout-YOLO checkpoints unchanged.
+### 2.1 Relevance
 
-**YOLOv10.** A real-time, single-stage object detector that removes the need for non-maximum suppression at
-inference by using consistent dual assignments during training (Wang et al., NeurIPS 2024). In this project the
-YOLOv10x checkpoint was pretrained on UED-mini (about 75,000 human-annotated pages curated from DocLayNet and M6Doc) and then fine-tuned on IndicDLP.
+To a computer, a scanned newspaper or textbook page is only a picture.
+Layout analysis turns it into a list of **boxes**, each a rectangle `(x1, y1, x2, y2)` with a label such as `headline`, `paragraph`, `figure` or `table` and a confidence score.
+This list is needed before text can be read, searched, indexed or made accessible.
+India has a very large body of Bengali and other Indic print, much of it archival, and layout models trained mostly on English scientific papers transfer poorly to it.
 
-**DocLayout-YOLO.** A YOLOv10-derived detector specialised for documents, using a Global-to-Local Controllable
-Receptive Module to handle both page-level structure and small regions (Zhao et al., 2024).
+### 2.2 Technology involved
 
-**Weighted Boxes Fusion (WBF).** An ensembling method for detectors (Solovyev et al., 2021). Unlike NMS, which
-discards overlapping boxes, WBF clusters overlapping boxes of the same class and *averages their coordinates
-weighted by confidence*, which usually gives better localisation. It is used here both for multi-scale and for
-multi-model fusion.
+| Area | Technology |
+|---|---|
+| Detectors | YOLOv10x (Ultralytics) and DocLayout-YOLO, single-stage object detectors, using the IndicDLP-fine-tuned checkpoints |
+| Fusion | Weighted Boxes Fusion (`ensemble-boxes`) |
+| Text reading (OCR) | Google Gemini (cloud) and EasyOCR (local, Bengali + English) |
+| Super-resolution | ESPCN x2 (OpenCV) to sharpen small cutouts |
+| PDF input | PyMuPDF renders each PDF page to an image |
+| Reading order and exports | Recursive XY-cut; COCO JSON, PAGE-XML and HTML writers; per-class AP (`detmetrics.py`) |
+| Interface | Streamlit with a custom JavaScript component for clickable boxes |
+| Runtime | Python, PyTorch (CUDA or CPU), Pillow, NumPy, OpenCV |
 
-### 2.1 How the detectors find and draw boxes
+### 2.3 Background material survey
 
-A beginner-friendly version of this subsection is in the [Overview](#overview-how-the-system-works).
-The version below is more technical.
+- **IndicDLP** (Nath et al., 2025): 119,806 pages from 12 document types, 1,856,241 human-drawn boxes, 42 classes, built with the Shoonya annotation tool. It is the dataset the checkpoints were trained on.
+- **YOLOv10** (Wang et al., NeurIPS 2024): a real-time detector trained to give one prediction per object, so it needs no non-maximum suppression (NMS). The YOLOv10x checkpoint was pretrained on UED-mini (about 75,000 pages from DocLayNet and M6Doc) and then fine-tuned on IndicDLP.
+- **DocLayout-YOLO** (Zhao et al., 2024): a YOLOv10-derived detector for documents, pretrained on synthetic layout pages and adding a Global-to-Local Controllable Receptive Module for page-level structure and small regions.
+- **Weighted Boxes Fusion** (Solovyev et al., 2021): instead of discarding overlapping boxes as NMS does, it averages the coordinates of overlapping boxes of the same class, weighted by confidence.
 
-Both models are **single-stage object detectors**: one forward pass over the page produces every box and its
-class, with no separate region-proposal step. The description below is the general YOLO-family design; the exact
-layers differ between YOLOv10x and DocLayout-YOLO.
+### 2.4 Procedure used
+
+Two released detectors were wrapped so that both return the same record per region. Their outputs were combined by multi-scale inference and WBF. The results were put behind an interactive Streamlit interface with language switching, OCR and export. The pipeline was then benchmarked on sample pages and evaluated against 100 human-annotated newspaper pages. Section 4 gives the details.
+
+### 2.5 Purpose
+
+To make state-of-the-art Indic layout detectors easy to run, compare and inspect, so that a researcher or archivist can drop in a page, see what each model finds, and judge where a prediction may be wrong.
+
+### 2.6 Topics covered in the first two weeks of training
+
+> **TO BE FILLED BY THE STUDENT before submission.** The template requires the list of topics taught in the first two weeks of the internship (21 Sep - 4 Oct 2026). This information is not recorded in the project files, so it has not been guessed here.
+>
+> 1. *(topic)*
+> 2. *(topic)*
+> 3. *(topic)*
+
+---
+
+## 3. Project Objective
+
+1. To build a single web interface over two IndicDLP layout detectors (YOLOv10x and DocLayout-YOLO) for English and Bengali document pages.
+2. To improve recall on small and faint regions by multi-scale inference and ensemble fusion (Weighted Boxes Fusion), and to measure its effect against the single models.
+3. To make detection observable: a live region-by-region reveal, clickable boxes with coordinates and cutouts, and class names in English, Bengali and ten other Indic languages without re-running the models.
+4. To extract the text of each region with OCR (Gemini or EasyOCR) and to support multi-page PDF input, batch processing and export as PNG, JSON, COCO JSON, PAGE-XML, HTML and reading-order text.
+5. To benchmark the models and measure per-class AP of the single models, the multi-scale boost and ensemble fusion (with tuned fusion weights) on human-annotated pages, and to report the limitations honestly.
+
+*Hypothesis testing: none was carried out. Sample survey: none was conducted, so there is no target population.*
+
+---
+
+## 4. Methodology
+
+### 4.1 Overall workflow
 
 ```mermaid
 flowchart LR
-    IMG["Page image<br/>resized to 1024 px"] --> BB["Backbone<br/>convolutions"]
-    BB --> NK["Neck<br/>mixes 3 scales"]
-    NK --> H["Head<br/>box + 42 class scores<br/>at every grid cell"]
-    H --> SEL["Keep best prediction<br/>per object"]
-    SEL --> TH["Confidence threshold"]
-    TH --> OUT["Boxes: x1, y1, x2, y2,<br/>class, score"]
+    A["Study IndicDLP, YOLOv10,<br/>DocLayout-YOLO, WBF"] --> B["Obtain released checkpoints<br/>(Zenodo)"]
+    B --> C["Unified wrapper:<br/>box, conf, class, label"]
+    C --> D["Multi-scale boost<br/>1024 px + 1280 px"]
+    D --> E["WBF per model<br/>IoU 0.60"]
+    E --> F["Ensemble WBF<br/>across models, IoU 0.55"]
+    F --> G["Reading order<br/>(XY-cut)"]
+    G --> H["Streamlit UI:<br/>PDF, batch, reveal, click"]
+    H --> I["OCR, ESPCN upscale,<br/>PNG / JSON / COCO / PAGE-XML / HTML / TXT"]
+    I --> J["benchmark.py and<br/>evaluate_fusion.py"]
 ```
 
-**Detection, step by step**
+### 4.2 Steps carried out
 
-1. **Resize.** The page is scaled to the inference size (1024 px by default) and normalised.
-2. **Backbone.** A stack of convolution layers turns the image into feature maps at three resolutions, one cell per
-   8, 16 and 32 input pixels (the "strides" of the network). The fine map keeps the detail needed for small regions
-   such as folios and page numbers; the coarse map sees large regions such as tables and whole columns.
-3. **Neck.** The three maps are combined: coarse maps are upsampled and merged with finer ones (and the reverse), so
-   every scale has both detail and context.
-4. **Head.** At every cell of every map the head predicts, in the same pass, the box (its four edges, measured
-   from the cell) and a score for each of the 42 classes. A page therefore produces thousands of candidate boxes.
-5. **Choosing the final boxes.** Classic YOLO keeps the best candidate by *non-maximum suppression* (NMS): the
-   highest-scoring box is kept and any box overlapping it by more than the IoU threshold is removed. YOLOv10 is trained to give **one prediction per object**, so this step is not needed at inference
-   ("NMS-free"). Finally, boxes whose best class score is below the **confidence threshold** are dropped.
-6. **Output.** Each remaining box is a rectangle `(x1, y1, x2, y2)`, a class (one of the 42) and a score. These are
-   the records the app shows and exports.
+1. **Literature and dataset study.** Read the IndicDLP, YOLOv10, DocLayout-YOLO and WBF papers; studied the 42-class schema and the annotation guideline (`guidelines/`).
+2. **Model acquisition.** Downloaded the two released checkpoints (`md2_PT_indicdlp_FT.pt`, 64 MB; `doclayout_yolo_indicdlp.pt`, 161 MB) with a size check, so a partial download is reported instead of crashing the app.
+3. **Unified detection layer.** Each model is wrapped so it returns `{box (x1,y1,x2,y2), conf, cls, label}`. Fusion, rendering and export are therefore written once.
+4. **Multi-scale boost.** Each YOLO-type model runs at size S (1024 px, the training size) and at S2 (1280 px). The two prediction sets are fused.
+5. **Weighted Boxes Fusion.** Boxes are normalised to [0,1]. Same-class boxes are clustered when IoU exceeds 0.60 (scales) or 0.55 (models). A fused box is the confidence-weighted average of its cluster, and its score is the cluster maximum.
+6. **Reading order.** A recursive XY-cut (`layout_order.py`) splits the page at the widest empty band, relative to the page size: stacked sections are read top to bottom and columns left to right, so a full-width headline precedes the columns beneath it. It replaces the earlier 40 px band sort. It is a geometric rule, **not** a learned model.
+7. **Localisation.** Class names are stored once in English and translated at display time by `i18n.py`, so changing language never triggers inference.
+8. **Interface.** Streamlit app with a file manager, sample gallery, model toggles, confidence / NMS-IoU / inference-size controls, a simplified six-family class view, and a custom component for clickable boxes.
+9. **OCR and enhancement.** A Gemini request per region (with model fallback) or local EasyOCR reads text-bearing regions; figures, tables, formulas, advertisements and placeholder text are skipped. ESPCN x2 can upscale a small crop first.
+10. **Export.** Annotated PNG, detections JSON, a full cutout JSON with cropped images, and, new, COCO JSON (`bbox` in pixels, 42 categories, reading order and OCR text), PAGE-XML (2019 schema: regions, reading order, text) and a self-contained HTML page in reading order. The TXT now assembles the OCR text in reading order (`assemble_text`).
+11. **PDF input and batch processing.** Uploaded PDFs are rendered page by page (PyMuPDF, 150 dpi, at most 200 pages) into the file manager. **Batch** runs detection (and optionally OCR) on every page without the animation and returns one ZIP: per-page JSON, PAGE-XML and text, plus one COCO file and one HTML file for the whole batch.
+12. **Benchmarking.** `benchmark.py` measures size, parameters, latency, detections, confidence, inter-model agreement and OCR speed on the sample pages.
+13. **Evaluation against human annotation.** `evaluate_fusion.py` computes per-class COCO-style AP (`detmetrics.py`) for each single model, the multi-scale boost and ensemble fusion on the 100 annotated pages (Section 5.4). Even-numbered pages tune the per-model fusion weights (grid 0.5-2.0); odd-numbered pages are held out for scoring. The same script runs on the IndicDLP test split when that dataset is downloaded.
 
-**Training, step by step**
+### 4.3 Data
 
-1. **Ground truth.** Every training page has human-drawn rectangles with a class id. They are
-   converted to the YOLO format: class, centre and size, all relative to the page.
-2. **Matching.** Each ground-truth box has to be assigned to the candidate predictions that should learn it.
-   Ultralytics uses a *task-aligned assigner*: candidates whose cell lies inside the box and whose predicted box
-   overlaps it well and whose class score is high get the box as their target; all other candidates are trained to
-   predict "background". YOLOv10 additionally trains a second, one-to-one head so that only the single
-   best candidate per object survives at inference, which is what removes NMS.
-3. **Loss.** The error to minimise combines a **box loss** (how much the predicted box overlaps the ground truth,
-   an IoU-based measure) and a **classification loss** (the
-   predicted 42 scores against the true class). YOLOv10x also uses a distribution-based box term.
-4. **Optimisation.** Pages are fed in batches with augmentation (mosaic of four pages, random scale, colour
-   jitter; flips and rotation are switched off here because text must not be mirrored). Gradient descent updates all
-   weights, the learning rate follows a cosine decay, and after every epoch the model is scored on the validation
-   pages (mAP). The checkpoint with the best score is kept.
-5. **Fine-tuning.** The models start from pretrained weights instead of random ones. YOLOv10x was pretrained on
-   UED-mini layout pages, and DocLayout-YOLO on synthetic layout pages; both are then trained on the IndicDLP pages so
-   the final layer outputs the 42 layout classes.
+| Item | Details |
+|---|---|
+| Training dataset | **IndicDLP** (public, AI4Bharat, on Hugging Face): 119,806 pages, 12 document domains, 1,856,241 regions, 42 classes |
+| Collection / cleaning / preprocessing | Done by the dataset authors (human annotation, YOLO-format conversion). Not repeated here. |
+| Data used in this project | (a) **Sample pages** (`data/examples/`, `docs/images/`): scanned English and Bengali newspapers, a brochure, a form, a question paper and a research paper, with no ground-truth boxes, used for the speed benchmark. (b) **Batch 06**: 100 scanned Bengali newspaper pages (March 1946) annotated in Label Studio with 10 classes (Headline, Subtitle, BodyText, Caption, Image, Header, Footer, Folio, PageNumber, Flag), 10,192 regions in total, each with OCR text. Used as ground truth in Section 5.4. |
+| Inference preprocessing | Convert to RGB, resize to the inference size (default 1024 px on the long side), run the detector, drop boxes below the confidence threshold (default 0.25) |
 
-**What is specific to document layout.** Regions are large, rectangular, tightly packed and strongly tied to their
-position on the page, and some classes differ only by size or level (headline vs sub-headline). That is why
-resolution matters (small page furniture), why headline and list levels get the lowest scores, and why
-DocLayout-YOLO adds a module that looks at both page-level structure and small regions.
+### 4.4 Model selection, training and validation
+
+- **Model selection.** YOLOv10x and DocLayout-YOLO were chosen because the IndicDLP authors released checkpoints for them, and they are the two best-performing single-stage detectors in the paper's tables (57.7 and 54.5 mAP[50:95]).
+- **Training.** **No model was trained in this project.** The authors fine-tuned both from pretrained weights (YOLOv10x: UED-mini; DocLayout-YOLO: DocSynth-300K) with mosaic, scale and colour augmentation, and with flips and rotation switched off so text is never mirrored. Training and evaluation scripts for DocLayout-YOLO are included in `doclayout-yolo/`.
+- **Train / validation / test split.** The split is the dataset's own, taken from the region counts published with it: 1,465,652 training, 186,284 validation and 184,392 test regions (about 80 / 10 / 10 %). It was not changed here.
+- **Validation of this project's pipeline.** On the sample pages there is no ground truth, so speed, number and confidence of detections and agreement between models were measured (Sections 5.2). On Batch 06, accuracy is measured against human annotation (Section 5.4). Split: 50 even-numbered pages tune the fusion weights, the other 50 are held out; the detectors themselves are not trained on either.
+- **Not done.** No model was fine-tuned on the Batch 06 pages, no learned reading-order model was built, and no Bengali-specialised OCR was added (Section 6).
+
+### 4.5 Tools and code
+
+- Python 3.10+ (tested on 3.14), PyTorch, Ultralytics, DocLayout-YOLO, `ensemble-boxes`, Streamlit, EasyOCR, OpenCV, Pillow, PyMuPDF.
+- Source code: **https://github.com/RajdipDhar2007/IndicDLP-Live-Layout-Studio**
+
+| File | Purpose |
+|---|---|
+| `app.py` | Streamlit app: inference, fusion, reveal animation, results, exports |
+| `i18n.py` | Names of the 42 classes in English and 11 Indic languages |
+| `annotation_view/` | Custom component for clickable boxes and in-browser cutouts |
+| `benchmark.py` / `benchmark_results.json` | Speed and agreement benchmark and its output |
+| `evaluate_fusion.py`, `detmetrics.py` | Per-class AP evaluation and fusion-weight tuning (IndicDLP YOLO format or a Label Studio export) |
+| `batch06_evaluation_*.json/.md`, `batch06_fusion_weights.json` | Results of that evaluation on Batch 06 |
+| `layout_order.py` | XY-cut reading order and reading-order text assembly |
+| `exports.py` | COCO JSON, PAGE-XML and HTML writers |
+| `pdfio.py` | PDF page rendering |
+| `tests/` | Unit tests (`python -m pytest tests -q`) |
+| `doclayout-yolo/` | Train / evaluate / predict scripts for DocLayout-YOLO |
+| `ESPCN_x2.pb` | Super-resolution weights |
+| `requirements.txt`, `run_app.bat` | Dependencies and Windows launcher |
+
+### 4.6 How to run
+
+```powershell
+git clone https://github.com/RajdipDhar2007/IndicDLP-Live-Layout-Studio.git
+cd IndicDLP-Live-Layout-Studio
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1                                   # Linux/macOS: source .venv/bin/activate
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128   # CPU only: pip install torch torchvision
+pip install -r requirements.txt
+python -m streamlit run app.py                                  # open http://localhost:8501
+```
+
+On first launch the sidebar offers a **Download weights** button for each missing checkpoint (about 225 MB in total; Zenodo record 15881917). Gemini OCR needs an API key in the sidebar or in `GEMINI_API_KEY`; EasyOCR works offline. An NVIDIA GPU is recommended but not required.
+
+**Using the app:** add pages in the File manager (or choose the Sample gallery), press **Scan & detect**, watch the reveal, then use the result tabs. Click a box for its coordinates, cutout, ESPCN upscale and OCR. Change **Region names** to switch language without re-running the models.
+
+| Setting | Default | Range |
+|---|---|---|
+| Multi-scale boost | On | On / Off |
+| Ensemble fusion | On | On / Off |
+| Confidence threshold | 0.25 | 0.05 - 0.95 |
+| NMS IoU | 0.70 | 0.10 - 0.95 |
+| Inference size | 1024 | 640, 800, 1024, 1280 |
 
 ---
 
-## 3. Dataset and label schema
+## 5. Data Analysis and Results
 
-The models were trained on **IndicDLP** (statistics below are as published for the whole dataset). This project is
-scoped to **English and Bengali**: the app's interface and region names are provided in those two languages only.
-The dataset files used here carry no per-page language field, so the detectors were trained on the full training split and cannot be
-restricted to these two languages without a separate language filter.
+All numbers below come from `benchmark_results.json` (GPU run: confidence 0.25, NMS IoU 0.70, 1024 px, 3 timed repetitions after a warm-up, 11 sample images).
 
-| Property | Value |
-|---|---|
-| Pages | 119,806 high-resolution images |
-| Annotations | 1,856,241 rectangular layout regions |
-| Languages | Multilingual dataset; this project uses English and Bengali |
-| Domains | 12 (novels, textbooks, magazines, acts and rules, research papers, manuals, brochures, syllabi, question papers, notices, forms, newspapers) |
-| Sources | Digitally born and scanned documents |
-| Labels | 42 physical and logical region classes |
-| Annotation tool | Shoonya (open source, built on Label Studio) |
+> **Caveat for 5.2.** The 11 images are the pictures stored in `docs/images/`. Nine are document pages or figures; two (`IndicDLP_instances_dis.png`, `layout_dist.png`) are tables of dataset statistics that yield one detection each. They have **no ground-truth boxes**, so these figures describe behaviour and cost, **not accuracy**.
 
-Share of the dataset's pages in the two languages used here (as published): English 9.1%, Bengali 7.6%.
+### 5.1 Comparative analysis of the models (prediction accuracy)
+
+Accuracy is COCO-style mAP averaged over IoU 0.50-0.95, as **published** in the IndicDLP paper. It was not re-measured here, and the paper does not say whether it is on the validation or test split.
+
+| Model | mAP[50:95] | Source | Parameters | File size |
+|---|---|---|---|---|
+| YOLOv10x (UED-mini pretrained, fine-tuned) | **57.7** | IndicDLP paper, Table 6 | 31.7 M | 64.3 MB |
+| DocLayout-YOLO (fine-tuned) | 54.5 | IndicDLP paper, Table 4 | 20.0 M | 161.5 MB |
+| YOLOv10x without UED-mini pretraining | 55.0 | IndicDLP paper, Table 4 | - | - |
+| Ensemble Fusion (this project) | not published | - | - | - |
 
 ```mermaid
-pie showData title Domain share of IndicDLP pages (%)
-    "Novels" : 11
-    "Textbooks" : 10.9
-    "Magazines" : 10.6
-    "Acts and Rules" : 10
-    "Manuals" : 9.6
-    "Research papers" : 9.4
-    "Brochures" : 8.4
-    "Syllabi" : 6.8
-    "Question papers" : 6.5
-    "Newspapers" : 5.7
-    "Forms" : 5.6
-    "Notices" : 5.4
+xychart-beta
+    title "mAP[50:95] on IndicDLP (higher is better)"
+    x-axis ["YOLOv10x", "DocLayout-YOLO"]
+    y-axis "mAP[50:95]" 40 --> 60
+    bar [57.7, 54.5]
 ```
 
-### 3.0 What this project actually used
+YOLOv10x leads by 3.2 points, and its UED-mini pretraining adds about 2.7 points (57.7 vs 55.0).
 
-| Item | Used here |
+### 5.2 Descriptive analysis
+
+**Mean over the 11 sample images**
+
+| Pipeline | Regions / page | Classes / page | Mean confidence | Time / page (single pass, 1024 px) | Time / page (multi-scale) |
+|---|---|---|---|---|---|
+| YOLOv10x | 25.8 | 6.2 | 0.615 | 92 ms | 202 ms |
+| DocLayout-YOLO | 26.3 | 5.8 | 0.612 | 84 ms | 191 ms |
+| **Ensemble Fusion** | **43.5** | **7.8** | 0.619 | - | 394 ms (both models, boosted, fused) |
+
+Total regions over the 11 images: YOLOv10x 284, DocLayout-YOLO 289, Ensemble 478.
+
+**Per image: regions found and time**
+
+| Image | YOLOv10x | DocLayout | Ensemble | YOLOv10x ms | DocLayout ms | Ensemble ms |
+|---|---|---|---|---|---|---|
+| br_bn_000817_1.png | 8 | 2 | 11 | 104 | 47 | 256 |
+| demo1_input.jpg | 77 | 82 | 102 | 82 | 80 | 421 |
+| demo2_input.jpg | 28 | 25 | 34 | 83 | 75 | 374 |
+| fm_bn_000220_0.png | 24 | 30 | 49 | 92 | 90 | 423 |
+| IndicDLP_instances_dis.png | 1 | 1 | 1 | 58 | 50 | 274 |
+| layout_dist.png | 1 | 1 | 1 | 65 | 59 | 304 |
+| np_bn_000047_0.png | 47 | 65 | 83 | 259 | 272 | 1023 |
+| paper-fig1.png | 15 | 28 | 35 | 52 | 46 | 235 |
+| paper-fig2.png | 27 | 22 | 92 | 72 | 66 | 346 |
+| qp_bn_000287_1.png | 41 | 22 | 51 | 92 | 84 | 416 |
+| rp_en_001247_0.png | 15 | 11 | 19 | 58 | 53 | 267 |
+
+**Agreement between models** (fraction of one model's boxes that have a same-class box with IoU >= 0.5 in the other)
+
+| Comparison | Agreement |
 |---|---|
-| YOLOv10x and DocLayout-YOLO | Released checkpoints, fine-tuned by their authors on IndicDLP; not re-trained here |
-| Language selection | None: the data files have no language field, so pages in all languages were used |
+| YOLOv10x boxes found by DocLayout-YOLO | 63.3 % |
+| DocLayout-YOLO boxes found by YOLOv10x | 66.8 % |
+| YOLOv10x boxes kept in the Ensemble | 95.4 % |
+| DocLayout-YOLO boxes kept in the Ensemble | 99.7 % |
 
-Sample pages are shown in [Section 3.2](#32-sample-annotated-pages-from-the-dataset).
+**OCR speed (EasyOCR, local GPU, 3 pages, 147 regions):** 25.4 s per page, 518 ms per region. Gemini OCR is cloud-based and was not timed.
 
-### 3.1 The 42 region classes
+**Demonstration (Ensemble output, default settings)**
 
-For display, the app groups the classes into eight colour families so that related regions are visually related.
+| Demo 1: English newspaper, *Amrita Bazar Patrika*, 15 Aug 1947 | Demo 2: Bengali newspaper page |
+|:---:|:---:|
+| <img src="docs/images/demo1_input.jpg" width="330"> <img src="docs/images/demo1_output.jpg" width="330"> | <img src="docs/images/demo2_input.jpg" width="330"> <img src="docs/images/demo2_output.jpg" width="330"> |
+
+- *Demo 1:* the banner is a `flag` (0.89); headlines 0.74 and 0.83; both photographs `figure` (0.95) with captions (0.81, 0.79); the insurance box an `advertisement` (0.95); small page furniture (`folio`, `dateline`) has the lowest confidence (about 0.28-0.62).
+- *Demo 2:* seven large advertisements are found (0.81-0.94); the small top-left advertisement is wrongly labelled `figure` (0.26); the three text columns are `paragraph` boxes.
+- Both are old, low-contrast scans. Large distinctive regions score high; small page furniture and headline levels score low and are the least reliable.
+
+### 5.3 Inferential analysis
+
+No hypothesis test or confidence interval was computed. The speed sample (11 images) has no ground truth, and the 50 held-out pages of Section 5.4 come from one newspaper and period. Differences of about one point in mAP between pipelines are therefore descriptive and should not be read as statistically significant.
+
+### 5.4 Evaluation against human annotation (Batch 06)
+
+**Data.** 100 scanned Bengali newspaper pages (March 1946), 10,192 human-corrected regions in 10 classes. The 50 even-numbered pages tune the fusion weights; the 50 odd-numbered pages (5,350 regions, counts per class below) are held out and scored. The detectors' 42 classes are folded onto the 10 annotation classes (`LS_CLASS_MAP` in `evaluate_fusion.py`; advertisements are counted as `Image`, all other text classes as `BodyText`, which is an assumption). Metric: COCO-style AP over IoU 0.50-0.95 (101-point), confidence cut-off 0.001, inference size 1024 (second scale 1280). Reproduce with:
+
+```
+python evaluate_fusion.py --ls-images <export>/images --ls-json <export>/json --out-prefix batch06
+```
+
+**Overall (50 held-out pages)**
+
+| Pipeline | mAP50 | mAP[50:95] |
+|---|---|---|
+| YOLOv10x, single scale | 37.5 | 23.0 |
+| YOLOv10x, multi-scale boost | 44.8 | 29.6 |
+| DocLayout-YOLO, single scale | 37.1 | 26.3 |
+| DocLayout-YOLO, multi-scale boost | 42.0 | 29.4 |
+| **Ensemble fusion, equal weights** | **49.4** | **33.7** |
+| Ensemble fusion, tuned weights (YOLOv10x 1.0, DocLayout-YOLO 1.5) | 48.7 | 33.7 |
+
+```mermaid
+xychart-beta
+    title "mAP[50:95] on 50 held-out annotated pages (higher is better)"
+    x-axis ["YOLOv10x", "DocLayout", "YOLOv10x+boost", "DocLayout+boost", "Ensemble"]
+    y-axis "mAP[50:95]" 20 --> 36
+    bar [23.0, 26.3, 29.6, 29.4, 33.7]
+```
+
+**Per-class AP[50:95] (held-out pages)**
+
+| Class | GT boxes | YOLOv10x | YOLOv10x + boost | DocLayout | DocLayout + boost | Ensemble | Ensemble, tuned |
+|---|---|---|---|---|---|---|---|
+| Headline | 683 | 33.6 | 35.6 | 32.0 | 37.5 | 39.9 | 40.5 |
+| Subtitle | 745 | 10.6 | 11.8 | 5.5 | 6.4 | 11.9 | 10.0 |
+| BodyText | 2963 | 44.8 | 48.3 | 60.4 | 64.7 | 64.1 | 65.1 |
+| Caption | 22 | 11.5 | 9.9 | 11.6 | 13.8 | 14.2 | 12.6 |
+| Image | 693 | 62.9 | 63.4 | 65.9 | 68.3 | 68.5 | 70.2 |
+| Header | 62 | 24.8 | 27.2 | 32.3 | 31.1 | 30.5 | 31.1 |
+| Footer | 2 | 25.0 | 65.3 | 0.0 | 10.1 | 60.3 | 55.3 |
+| Folio | 99 | 1.4 | 3.0 | 4.4 | 6.2 | 5.3 | 6.0 |
+| PageNumber | 71 | 0.4 | 2.9 | 0.7 | 0.8 | 2.6 | 2.3 |
+| Flag | 10 | 15.0 | 29.0 | 50.2 | 55.3 | 40.1 | 43.5 |
+
+**Fusion-weight tuning** (DocLayout-YOLO weight relative to YOLOv10x = 1.0, scored on the 50 tuning pages, mAP[50:95]):
+
+| DocLayout-YOLO weight | 0.5 | 0.75 | 1.0 | 1.5 | 2.0 |
+|---|---|---|---|---|---|
+| mAP[50:95] on tuning pages | 36.3 | 37.6 | 39.1 | **40.8** | 40.7 |
+
+Weight 1.5 is best on the tuning pages (+1.7 over equal weights) but gives **no gain on the held-out pages** (33.7 vs 33.7 mAP[50:95], and 0.7 lower mAP50). The tuned weights are therefore saved as `batch06_fusion_weights.json` and **not** enabled by default; copying the file to `fusion_weights.json` makes the app use them.
+
+**Caveats.** (1) The folder name and `run_ensemble.py` suggest the annotators corrected pre-annotations produced by this ensemble, which would favour the ensemble and its box geometry; the comparison with the single models is therefore optimistic for the ensemble. (2) Caption (22), Footer (2) and Flag (10) have too few held-out boxes for their AP to be reliable. (3) One newspaper and period only.
+
+### 5.5 Observations
+
+- The ensemble found about 65 % more regions per page than either single model (43.5 vs about 26), because the two models often disagree (only 63-67 % of one model's boxes are matched by the other) and WBF keeps a region when only one model finds it. Without ground truth we cannot say how many of the extra regions are correct, and some may be false positives or near-duplicates.
+- Mean confidence was almost unchanged (0.619 vs 0.612-0.615).
+- Multi-scale inference roughly doubles the time (92 to 202 ms and 84 to 191 ms), and the full ensemble costs about 0.39 s per page, which is acceptable for interactive use on a GPU.
+- On the human-annotated pages the multi-scale boost lifted mAP[50:95] by 6.6 points for YOLOv10x (23.0 to 29.6) and 3.1 for DocLayout-YOLO (26.3 to 29.4), and the ensemble added a further 4.1-4.3 points over either boosted model (33.7). See the bias caveat in Section 5.4.
+- DocLayout-YOLO is clearly better on body text (64.7 vs 48.3) and flags; YOLOv10x is better on subtitles. The ensemble is best or near-best on most classes, and weakest on small page furniture (Folio, PageNumber below 6 AP), exactly the classes the report names as hard.
+- Tuning the model weights did not generalise (Section 5.4), so equal weights remain the default.
+- Cost is dominated by page density: the dense Bengali newspaper `np_bn_000047_0.png` took 1.02 s in ensemble mode, about four times the average.
+
+---
+
+## 6. Conclusion
+
+- **A usable system was delivered.** Two research checkpoints now run behind one interface that supports live reveal, clickable cutouts, 11 Indic languages for labels, OCR, multi-page PDF input, batch processing, and export as PNG, JSON, COCO JSON, PAGE-XML, HTML and reading-order text, and that falls back gracefully when a model or weights file is missing.
+- **Ensemble fusion increases coverage.** On the 11 sample pages it returned 478 regions against 284 and 289 for the single models, and kept 95.4 % and 99.7 % of their boxes. The two detectors agree on only about two thirds of their boxes, so they are complementary.
+- **The cost is acceptable.** About 0.39 s per page for the full boosted ensemble on a GPU, against 0.08-0.09 s for one model at one size.
+- **Fusion improves accuracy on annotated Bengali newspaper pages.** On 50 held-out pages, mAP[50:95] rose from 23.0 / 26.3 (single scale) to 29.6 / 29.4 with the multi-scale boost and to 33.7 with the ensemble. The gain is probably overstated because the annotations were likely started from this ensemble's output. On the IndicDLP test split the published figures are 57.7 (YOLOv10x) and 54.5 (DocLayout-YOLO); the new `evaluate_fusion.py` can repeat the evaluation there, but that dataset was not available here.
+- **Per-model fusion weights did not generalise.** The best weights on the tuning pages (1.0 / 1.5) gave +1.7 mAP there and +0.0 on the held-out pages, so equal weights are kept.
+- **Weak spots are consistent.** Small page furniture, hierarchical classes (headline, list and question levels) and rare classes get the lowest confidence, and a small advertisement was misclassified in Demo 2.
+
+**Limitations.** Rectangular boxes only; the reading order is a geometric XY-cut, not a learned model (it can fail on interleaved or overlapping boxes), and it has not been scored against human reading-order labels; the OCR text is assembled in that order but uses the same general OCR engines (no Bengali-specialised OCR was added); PDFs are rendered at 150 dpi and capped at 200 pages; Bengali and Indic label translations need native-speaker review; no model was trained here; the speed-benchmark pages carry no ground truth and include two non-page images; the accuracy evaluation covers one newspaper from one period with 10 coarse classes; EasyOCR is slow (518 ms per region); Gemini OCR sends region images to Google.
+
+**Recommendations for future work**
+
+1. Run `evaluate_fusion.py` on the IndicDLP validation and test splits (per-class AP over all 42 classes) and re-tune the fusion weights there; the weights tuned on 50 newspaper pages did not generalise.
+2. Obtain independently annotated pages (not started from the ensemble's output) so the fusion gain can be measured without bias, and add a significance test.
+3. Replace the XY-cut with a learned reading-order model, evaluate it against human reading-order labels, and add a Bengali-specialised OCR.
+4. Fine-tune the detectors on the 100 annotated Bengali archival pages (and more) to improve small and hierarchical classes such as folio, page number, subtitle and caption.
+5. Add per-page quality controls to the batch mode (retry, resume, per-page settings) and larger PDF support.
+
+---
+
+## 7. Appendices
+
+### Appendix 1: References
+
+1. A. Wang, H. Chen, L. Liu, et al. *YOLOv10: Real-Time End-to-End Object Detection.* NeurIPS 2024.
+2. Z. Zhao, H. Kang, B. Wang, C. He. *DocLayout-YOLO: Enhancing Document Layout Analysis through Diverse Synthetic Data and Global-to-Local Adaptive Perception.* arXiv:2410.12628, 2024.
+3. R. Solovyev, W. Wang, T. Gabruseva. *Weighted Boxes Fusion: Ensembling boxes from different object detection models.* Image and Vision Computing, 2021.
+4. O. Nath, S. Kukkala, M. Khapra, R. K. Sarvadevabhatla. *IndicDLP: A Foundational Dataset for Multi-Lingual and Multi-Domain Document Layout Parsing.* arXiv:2512.20236, 2025. [arXiv](https://arxiv.org/abs/2512.20236), [project page](https://indicdlp.github.io/), [dataset](https://huggingface.co/datasets/ai4bharat/indicdlp).
+5. Libraries: [Ultralytics](https://github.com/ultralytics/ultralytics), [DocLayout-YOLO](https://github.com/opendatalab/DocLayout-YOLO), [ensemble-boxes](https://github.com/ZFTurbo/Weighted-Boxes-Fusion), [EasyOCR](https://github.com/JaidedAI/EasyOCR), [Streamlit](https://streamlit.io), [PyTorch](https://pytorch.org).
+6. Model weights: Zenodo record 15881917 (`md2_PT_indicdlp_FT.pt`, `doclayout_yolo_indicdlp.pt`).
+
+### Appendix 2: Survey Questionnaire
+
+Not applicable. No survey was conducted.
+
+### Appendix 3: GitHub link for the code
+
+https://github.com/RajdipDhar2007/IndicDLP-Live-Layout-Studio
+
+### Appendix 4: Other documents
+
+- Benchmark data: `benchmark_results.json`, produced by `benchmark.py` (both in the repository).
+- Evaluation on human-annotated pages: `batch06_evaluation_results.json`, `batch06_evaluation_per_class.md`, `batch06_fusion_weights.json`, produced by `evaluate_fusion.py`. The annotated pages themselves are in the local folder `batch_06_ensemble/export_2026-11-20` (not in the repository).
+- IndicDLP annotation guideline: `guidelines/ANNOTATION_GUIDELINE_BY_CATEGORY.pdf`.
+- Copy of this report: this `README.md`. A PDF copy and the presentation can be added to the repository or Google Drive and linked here.
+
+### Appendix 5: The 42 region classes
 
 | Family | Classes |
 |---|---|
@@ -371,631 +403,3 @@ For display, the app groups the classes into eight colour families so that relat
 | Page furniture | header, footer, page-number, folio, flag, dateline, jumpline |
 | Exam parts | first-level-question, second-level-question, third-level-question, options, answer |
 | Other | advertisement, contact-info, placeholder-text, website-link |
-
-### 3.2 Sample annotated pages from the dataset
-
-These pages come from IndicDLP. Each coloured rectangle is a region drawn by a human annotator, and the tag above it
-is its label. They show what the models are trained to reproduce. Only English and Bengali pages are shown, matching
-the scope of this project.
-
-| Bengali brochure (`br_bn_000817_1`) | Bengali form (`fm_bn_000220_0`) |
-|:---:|:---:|
-| <img src="docs/images/br_bn_000817_1.png" width="400" alt="Bengali brochure with flag, paragraph, dateline and contact-info regions"> | <img src="docs/images/fm_bn_000220_0.png" width="400" alt="Bengali government form with header, table, placeholder-text and footnote regions"> |
-| A poster with a decorative `flag`, short `paragraph` text, a `dateline` and `contact-info`. | A form full of `placeholder-text` fields, a `table`, `figure` seals, a `sidebar` and `footnote`s. |
-
-| Bengali newspaper (`np_bn_000047_0`) | Bilingual question paper (`qp_bn_000287_1`) |
-|:---:|:---:|
-| <img src="docs/images/np_bn_000047_0.png" width="400" alt="Bengali newspaper page with headline, sub-headline, paragraph, figure and advertisement regions"> | <img src="docs/images/qp_bn_000287_1.png" width="400" alt="English and Bengali chemistry question paper with first-level-question, options and formula regions"> |
-| A dense page: masthead `flag`, several headline levels, many `paragraph` columns, `figure`, `jumpline`s and `advertisement`s. | English and Bengali columns side by side, with `first-level-question`, `options` and many `formula` regions. |
-
-| English research paper (`rp_en_001247_0`) |
-|:---:|
-| <img src="docs/images/rp_en_001247_0.png" width="400" alt="English astronomy paper page with figure, figure-caption, paragraph and reference regions"> |
-| A `figure` with its `figure-caption`, body `paragraph`s, `section-title`s, a `reference` list and a `footer`. |
-
-### 3.3 Region counts per split
-
-The table below lists how many regions of each of the 42 classes the training, validation and test splits contain.
-Its totals (1,465,652 / 186,284 / 184,392) differ slightly from Table 3 of the arXiv version of the paper
-(1,482,572 / 187,670 / 185,999), so the two probably come from different versions of the annotations. Paragraphs make up about a third of all regions, while classes such as
-`subsub-unordered-list` (96 training regions), `index` (460) and `table-of-contents` (953) are rare. This imbalance is
-one reason the rare classes get the lowest scores.
-
-<img src="docs/images/IndicDLP_instances.png" width="520" alt="Table of region instance counts and percentages per class for the train, validation and test splits">
-
----
-
-## 4. System design
-
-### 4.1 Architecture
-
-The system is a single-process Streamlit application. The user interface, the model registry, the inference
-engine, the fusion module, the localisation module and the exporters are separate layers.
-
-```mermaid
-flowchart TB
-    subgraph UI["Presentation layer (Streamlit)"]
-        U1["Image upload"]
-        U2["Sidebar: models, language, thresholds"]
-        U3["Animated scan + live reveal"]
-        U4["Results: table, chart, annotated page"]
-    end
-
-    subgraph CORE["Inference layer"]
-        R["Model registry<br/>status + weights check"]
-        L["Cached model loader<br/>st.cache_resource"]
-        P["predict_once<br/>unified detection format"]
-        MS["Multi-scale boost<br/>2 passes per model"]
-        F1["Weighted Boxes Fusion<br/>per model"]
-        F2["Ensemble Fusion<br/>across models"]
-        RO["Reading-order sort"]
-    end
-
-    subgraph MODELS["Detectors (IndicDLP checkpoints)"]
-        M1["YOLOv10x<br/>Ultralytics"]
-        M2["DocLayout-YOLO"]
-    end
-
-    subgraph OUT["Output layer"]
-        O1["Interactive annotated page<br/>English and Bengali labels"]
-        O2["Annotated PNG"]
-        O3["Detections JSON"]
-    end
-
-    I18["i18n.py<br/>42 classes x 2 languages"]
-
-    U1 --> P
-    U2 --> R
-    R --> L
-    L --> M1
-    L --> M2
-    M1 --> P
-    M2 --> P
-    P --> MS --> F1 --> RO --> U3
-    RO --> F2 --> RO
-    U3 --> U4
-    U4 --> O1
-    U4 --> O2
-    U4 --> O3
-    I18 --> O1
-    I18 --> U3
-```
-
-### 4.2 Components
-
-| Component | File | Responsibility |
-|---|---|---|
-| Application and UI | `app.py` | Sidebar controls, animations, orchestration, results view, exports |
-| Click-to-cutout viewer | `app.py` (`overlay_doc`) | In-browser page with clickable boxes: download prompt, in-browser crop, coordinate readout |
-| Coordinate export | `app.py` (`detections_json`, `coord_rows`) | Detections JSON and the coordinates table |
-| Model registry | `app.py` (`MODELS`) | Names, checkpoint files, expected sizes, availability checks |
-| Inference engine | `app.py` (`predict_once`, `run_model`) | Runs a model and converts its output to one common format |
-| Fusion | `app.py` (`fuse`) | Weighted Boxes Fusion for scales and for models |
-| Localisation | `i18n.py` | Names of all 42 classes in English and Bengali |
-| Model code | `ultralytics`, `doclayout-yolo` (pip packages) | Upstream implementations required by those checkpoints |
-
-### 4.3 Interaction sequence
-
-```mermaid
-flowchart LR
-    A["1. Upload a page"] --> B["2. Choose settings<br/>(models, threshold, language)"]
-    B --> C["3. Press Scan and detect"]
-    C --> D["4. Each model finds boxes<br/>(optionally at two sizes)"]
-    D --> E["5. Optional: merge the models<br/>with Weighted Boxes Fusion"]
-    E --> F["6. Boxes are revealed one by one,<br/>then table, chart and annotated page"]
-    F --> G["7. Switch language, click a box<br/>for its cutout, or download PNG / JSON"]
-```
-
-The language can be switched at step 7 without running the models again, because only the label text changes.
-
----
-
-## 5. Methodology
-
-### 5.1 End-to-end pipeline
-
-```mermaid
-flowchart LR
-    A([Page image]) --> B[Convert to RGB]
-    B --> C{For each<br/>enabled model}
-    C --> D["Pass 1<br/>imgsz = S"]
-    C --> E{"Multi-scale<br/>boost on and<br/>model is YOLO-type?"}
-    E -- yes --> F["Pass 2<br/>imgsz = S2"]
-    E -- no --> G
-    D --> G["WBF of passes<br/>IoU 0.60"]
-    F --> G
-    G --> H["Reading-order sort"]
-    H --> I[("Per-model<br/>detections")]
-    I --> J{"2 or more<br/>models and<br/>fusion on?"}
-    J -- yes --> K["Ensemble WBF<br/>IoU 0.55"]
-    K --> L[("Ensemble<br/>detections")]
-    J -- no --> M
-    I --> M["Render: overlay, table,<br/>chart, PNG, JSON"]
-    L --> M
-```
-
-### 5.2 Detection and common format
-
-Every model, whatever its framework, is wrapped so that it returns the same record per region:
-`{box: (x1, y1, x2, y2), conf, cls, label}`. The YOLO-type models are called through their predict API with the user's
-confidence threshold, NMS IoU and inference size.
-This is what lets fusion, rendering and
-export be written once.
-
-### 5.3 Multi-scale boost
-
-Small or faint regions (page numbers, folios, captions, datelines) are easily missed at a single resolution. When
-the boost is enabled, each YOLO-type model is run twice: at the chosen size *S* (default 1024 px, the size used in
-training) and at a second size *S₂* (1280 px, or 1024 px if *S* is already 1280). The two prediction sets are fused as
-described below.
-
-### 5.4 Weighted Boxes Fusion
-
-Boxes are normalised to [0, 1] by the page width and height. For each class, boxes from all input sets are
-clustered when their IoU exceeds a threshold (0.60 for scales, 0.55 for models). A fused box is the
-confidence-weighted average of the cluster:
-
-```
-x_fused = ( Σᵢ sᵢ · xᵢ ) / ( Σᵢ sᵢ )        (same for y₁, x₂, y₂)
-s_fused = max over the cluster of sᵢ         (conf_type = "max")
-```
-
-Predictions below the user's confidence threshold are dropped before fusion (`skip_box_thr`). Compared with NMS, this
-uses information from every contributing box rather than keeping only one, which tends to tighten localisation when
-models agree and keeps a region when only one model finds it.
-
-### 5.5 Ensemble fusion
-
-The same procedure is applied across the per-model results. The ensemble is therefore a *recall-oriented union with
-averaged geometry* of the individual models, and is shown as its own result tab so it can be compared with each
-constituent.
-
-### 5.6 Reading order
-
-Detections are sorted by the vertical position of their top edge, quantised into bands of 40 px, and then by their
-left edge. This gives a natural top-to-bottom, left-to-right ordering used for the live reveal and for the JSON
-output. It is a lightweight heuristic and is not a full reading-order model (see
-[Limitations](#9-limitations-and-future-work)).
-
-### 5.7 Localisation
-
-Class names are stored once in English (the labels the models emit) and mapped to Bengali by
-`i18n.py` at display time. Since only the display string changes, switching language never triggers inference.
-The translations are concise conventional layout terms intended for display and should be reviewed by a native
-speaker before formal use.
-
-### 5.8 Engineering details
-
-- **Caching:** loaded models are cached with `st.cache_resource`, so only the first scan pays the load and GPU
-  warm-up cost.
-- **Device selection:** CUDA is used when available, otherwise the CPU.
-- **Robust weights handling:** each checkpoint is checked against its expected file size, so a partial download is
-  reported instead of crashing the app.
-- **Graceful degradation:** a model whose weights are missing is disabled with an explanation and the other models
-  continue to work.
-
----
-
-## 6. Input and output specification
-
-### 6.1 Input
-
-| Item | Details |
-|---|---|
-| Formats | PNG, JPG / JPEG, BMP, WebP |
-| Source | Browser upload |
-| Content | One page per run, in any supported language or domain |
-| Resolution | Arbitrary. The models see the page at the *Inference size* (default 1024 px); exports use the original resolution |
-
-### 6.2 Output
-
-For every model, and for the ensemble, the system produces:
-
-1. **Interactive annotated page.** Colour-coded boxes with labels in the chosen language and confidence on hover.
-   Clicking a box opens a prompt that shows the region's pixel coordinates and asks whether to download its **cutout**
-   (a PNG of just that region, cropped from the full-resolution page and named `<image>_<model>_<id>_<label>.png`). Colour-coded boxes with labels in the chosen language and confidence on hover.
-2. **Annotated PNG** at full resolution, labelled `class score` in English. On pages with more than 30 regions,
-   `paragraph` labels are omitted to keep the image readable.
-3. **Detections JSON**, a header with the page size and one object per region in reading order:
-
-```json
-{
-  "image": "page_01",
-  "width": 1654,
-  "height": 2339,
-  "coordinate_system": "pixels, origin top-left, x to the right, y downwards",
-  "count": 1,
-  "detections": [
-    {
-      "id": 1,
-      "label": "paragraph",
-      "name_local": "paragraph",
-      "class_id": 21,
-      "confidence": 0.9612,
-      "bbox_xyxy": [112.4, 530.0, 705.8, 1190.2],
-      "bbox_xywh": [112.4, 530.0, 593.4, 660.2],
-      "bbox_normalized": [0.06796, 0.2266, 0.42674, 0.50886]
-    }
-  ]
-}
-```
-
-| Field | Meaning |
-|---|---|
-| `image`, `width`, `height` | Source file name (without extension) and its size in pixels |
-| `id` | Position in reading order, starting at 1; the same number shown on the page and in the cutout file name |
-| `label` | Class name in English |
-| `name_local` | Class name in the selected display language |
-| `class_id` | Class index 0 to 41 |
-| `confidence` | Confidence score in [0, 1] |
-| `bbox_xyxy` | `[x1, y1, x2, y2]`: left, top, right, bottom corners in pixels of the original image |
-| `bbox_xywh` | `[x, y, width, height]` of the same box, in pixels |
-| `bbox_normalized` | `bbox_xyxy` divided by the page size, so values lie in [0, 1] |
-| `text` | Text read by OCR (Bengali and English); present only after **Extract text (OCR)** has been used, empty for figures, tables and similar regions |
-
-The values shown are illustrative. The same coordinates are available in the app without opening the file: click a box,
-or open the **Coordinates of all boxes** table under the page.
-
-### 6.3 Configurable parameters
-
-| Parameter | Role | Range | Default |
-|---|---|---|---|
-| Models | Which detectors run | YOLOv10x, DocLayout-YOLO | All whose weights are present |
-| Multi-scale boost | Second inference size, fused with the first | On / Off | On |
-| Ensemble fusion | Fuse all models into one result | On / Off | On |
-| Confidence threshold | Minimum score kept | 0.05 to 0.95, step 0.05 | 0.25 |
-| NMS IoU | Duplicate-removal overlap threshold | 0.10 to 0.95, step 0.05 | 0.70 |
-| Inference size | Input resolution in pixels | 640, 800, 1024, 1280 | 1024 |
-| Region-name language | Language of the class names | English, Bengali | English |
-| Reveal speed | Animation pace only, no effect on results | Cinematic, Normal, Fast, Instant | Normal |
-
-The reveal speed sets how long the box-by-box animation takes for a page: about 6 s (Cinematic), 3 s (Normal),
-1.2 s (Fast) or no delay (Instant), with at most 0.6 s between two boxes. The *Reset to defaults* button restores
-every value above.
-
----
-
-## 7. Experiments and results
-
-### 7.1 Benchmark accuracy of the detectors
-
-Accuracy is the COCO-style mAP averaged over IoU 0.50 to 0.95 (mAP[50:95]).
-
-| Model | mAP[50:95] | Source | How it was obtained |
-|---|---|---|---|
-| YOLOv10x | 57.7 | IndicDLP paper [4], Table 6 | Published; the model pretrained on UED-mini, then fine-tuned on IndicDLP |
-| DocLayout-YOLO | 54.5 | IndicDLP paper [4], Table 4 | Published; fine-tuned on IndicDLP |
-
-Notes on reading the table:
-
-- The two published figures are copied from the paper. They were not re-measured here. The paper does not state
-  whether they were computed on the validation or the test split.
-- For comparison, the paper reports 55.0 for YOLOv10x without UED-mini pretraining (Table 4), so the pretraining adds
-  about two to three points.
-
-```mermaid
-xychart-beta
-    title "mAP[50:95] on IndicDLP (higher is better)"
-    x-axis ["YOLOv10x", "DocLayout-YOLO"]
-    y-axis "mAP[50:95]" 40 --> 60
-    bar [57.7, 54.5]
-```
-
-The ensemble stage has no published benchmark figure. Its effect can be inspected per page through the comparison
-table in the app (regions found, classes found, average confidence, time).
-
-### 7.2 Demonstration: input and output
-
-Two archival newspaper pages were run through the app with its default settings. The output is the **Ensemble Fusion**
-result: the boxes of the enabled models merged with Weighted Boxes Fusion. Each box carries the label of its region
-and the model's confidence (0 to 1).
-
-#### Demo 1: English newspaper (*Amrita Bazar Patrika*, 15 August 1947)
-
-| Input | Output |
-|:---:|:---:|
-| <img src="docs/images/demo1_input.jpg" width="420" alt="Scanned front page of the Amrita Bazar Patrika, 15 August 1947"> | <img src="docs/images/demo1_output.jpg" width="420" alt="The same page with detected regions drawn as labelled boxes"> |
-
-What the output shows:
-
-- The banner headline "India Independent Today" is found as a `flag` (0.89), and the newspaper title as a second `flag` (0.50).
-- The main headlines are found as `headline` (0.74 and 0.83), with their sub-headlines as `sub-headline` (0.38 to 0.64).
-- Both photographs are `figure` (0.95), each with its `figure-caption` (0.81 and 0.79), and the two round portraits at the
-  top are also found as `figure`.
-- The Hindusthan General Insurance box is an `advertisement` (0.95). The poem and the advertisement below it on the right
-  appear to be covered by a single `advertisement` box (0.92).
-- Body text is found as many `paragraph` boxes (blue), including the narrow columns at the bottom.
-- Small page furniture such as the registration line, volume and issue, and date line is found as `folio` and `dateline`
-  boxes, with lower confidence (about 0.28 to 0.62).
-
-#### Demo 2: Bengali newspaper page
-
-| Input | Output |
-|:---:|:---:|
-| <img src="docs/images/demo2_input.jpg" width="420" alt="Scanned Bengali newspaper page with eight advertisements around two text columns"> | <img src="docs/images/demo2_output.jpg" width="420" alt="The same page with detected regions drawn as labelled boxes"> |
-
-What the output shows:
-
-- Seven of the large advertisements around the text are detected as `advertisement` (0.81 to 0.94). The small advertisement at
-  the top left is labelled `figure` (0.26) instead, which is a mistake.
-- The two flag illustrations are found: one as part of an `advertisement`, one as a `figure` (0.92).
-- The three text columns are found as `paragraph` boxes (blue). The article title is a `section-title` (0.39 and 0.42) and the
-  author line a `sub-headline` (0.29).
-- The page header is found as `header`, `folio` (0.70) and `page-number` (0.29), and the "continued" line at the bottom as
-  `jumpline` (0.41).
-
-Both pages are old, low-contrast scans with stains and torn edges. The large, distinctive regions (photographs,
-advertisements, headlines, body columns) receive high confidence, while small page furniture and headline levels receive
-low confidence and are the least reliable.
-
-### 7.3 Discussion
-
-Detectors of this kind show a consistent pattern: large, visually distinctive regions (table, paragraph,
-figure, headline) score high, while hierarchy-dependent classes (headline levels, list levels, question levels) and
-rare classes score low. This is the trade-off that the *Multi-scale boost* and *Ensemble fusion* options are meant to
-address, and the app lets the user observe it directly by toggling them and comparing the result tabs.
-
----
-
-## 8. Installation and usage
-
-### Guide for evaluators
-
-This section is the fastest route to a working demo.
-
-1. **What to expect.** A web app that detects layout regions on a document page with up to two models, fuses
-   their outputs, and shows labels in English and Bengali. It runs in a browser at `http://localhost:8501`.
-2. **Minimum setup (about 10 minutes plus downloads).** Follow the Quick start below. Only YOLOv10x and
-   DocLayout-YOLO are needed; they run on a normal laptop, with or without a GPU.
-3. **Weights.** About 225 MB for the two YOLO models. The app downloads them with one click on first launch.
-4. **Try it.** Upload a document page, press *Scan & detect*, then switch the *Region names* language.
-5. **If something fails,** see [Troubleshooting](#step-10-troubleshooting).
-
-### Quick start (YOLOv10x and DocLayout-YOLO)
-
-```powershell
-git clone <repository-url>
-cd <project-folder>
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1          # Linux/macOS: source .venv/bin/activate
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128   # CPU only: pip install torch torchvision
-pip install -r requirements.txt
-python -m streamlit run app.py        # then open http://localhost:8501 and click "Download weights"
-```
-
-The detailed steps follow.
-
-### Step 1: Requirements
-
-- **Git** ([download](https://git-scm.com/downloads))
-- **Python 3.10 or newer** ([download](https://www.python.org/downloads/)), tested on 3.14.
-  When installing on Windows, tick **"Add python.exe to PATH"**.
-- About **2 GB of free disk space** (PyTorch is the biggest part)
-- An **NVIDIA GPU is recommended** but not required. Without one the app runs on the CPU, just more slowly.
-- Internet access for the install and the first weight download
-
-Check that everything is installed:
-
-```bash
-git --version
-python --version
-```
-
-### Step 2: Clone the repository
-
-```bash
-git clone <repository-url>
-cd <project-folder>
-```
-
-> Replace `<repository-url>` with the address of this repository and `<project-folder>` with the folder name that
-> `git clone` creates.
-
-All the following commands are run **from inside this project folder**.
-
-### Step 3: Create a virtual environment
-
-A virtual environment keeps this project's packages separate from the rest of the system.
-
-**Windows (PowerShell):**
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-```
-
-If PowerShell blocks the activation script, run this once and try again:
-`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`
-
-**Linux / macOS:**
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-The terminal prompt now starts with `(.venv)`. The remaining steps are done in this same terminal.
-
-### Step 4: Install PyTorch
-
-Install PyTorch **first**, because the right build depends on the hardware. **One** line is chosen:
-
-```bash
-# NVIDIA GPU (CUDA 12.8)
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
-
-# CPU only (or macOS)
-pip install torch torchvision
-```
-
-For other CUDA versions, use the selector on <https://pytorch.org/get-started/locally/>.
-
-### Step 5: Install the other requirements
-
-```bash
-pip install -r requirements.txt
-```
-
-This installs Streamlit, Ultralytics (YOLOv10), DocLayout-YOLO, ensemble-boxes, Pillow, NumPy and OpenCV.
-
-### Step 6: Get the model weights
-
-The weight files live in the `weights/` folder. They are large, so they are **not** stored in the git repository.
-
-| File | Model | Size |
-|---|---|---|
-| `md2_PT_indicdlp_FT.pt` | YOLOv10x | 64 MB |
-| `doclayout_yolo_indicdlp.pt` | DocLayout-YOLO | 161 MB |
-
-**Easiest way:** skip this step. When the app starts (step 7), any missing model shows a
-**⬇ Download weights** button in the sidebar.
-
-**Manual download:**
-
-```bash
-mkdir weights
-curl -L -C - -o weights/md2_PT_indicdlp_FT.pt "https://zenodo.org/records/15881917/files/md2_PT_indicdlp_FT.pt?download=1"
-curl -L -C - -o weights/doclayout_yolo_indicdlp.pt "https://zenodo.org/records/15881917/files/doclayout_yolo_indicdlp.pt?download=1"
-```
-
-On Windows PowerShell, use `curl.exe` instead of `curl`, and `New-Item -ItemType Directory -Force weights` instead of `mkdir weights`.
-
-`-C -` resumes an interrupted download. Zenodo can be slow, so be patient. The app ignores partly downloaded files,
-so an unfinished download will not crash it.
-
-All checkpoints were checked and the two YOLOv10-based models load and detect.
-
-### Step 7: Run the app
-
-```bash
-python -m streamlit run app.py
-```
-
-The app opens at **http://localhost:8501**. If the browser does not open by itself, the address can be pasted into it.
-To stop the app, press `Ctrl + C` in the terminal.
-
-**To start it again later:** open a terminal in the project folder, activate the environment again
-(step 3, the `Activate` / `source` line only), then run the command above.
-
-### Step 8: Using the app
-
-1. Add one or more page images (PNG, JPG, JPEG, BMP or WEBP) in the **File manager** on the right and press **Open**
-   on the page to work on, or switch **Source** to **Sample gallery**. Tick **Done** when a page is finished.
-2. Click **🚀 Scan & detect**.
-3. Watch the scan, then each model's regions appear one by one with a live feed, stats and a progress bar.
-4. Scroll to **Results** for the comparison table, the per-class chart and the annotated page. Use the model tabs,
-   and the **Download** buttons for a PNG or JSON export. Hover over a box to see its label and confidence.
-   **Click a box** to open its cutout window: pixel coordinates, **Download cutout (PNG)**, **Upscale crop with
-   ESPCN x2** and **Run Gemini OCR** (editable text). **Transcribe all regions** runs Gemini on every text region, and
-   **Prepare full JSON export** builds one file with all crops and OCR records. The
-   **Coordinates of all boxes** table under the page lists every box.
-5. Change the language in the sidebar (**Region names**) to see the labels in Bengali.
-   This updates the results instantly without re-running the models.
-6. OCR can be switched off with **Enable OCR** in the sidebar (annotations only, no Gemini requests). Otherwise choose the OCR engine in the sidebar (Gemini needs an API key; EasyOCR works offline), then press **Extract text** above the page of any result tab to read the text inside every text region. After a
-   few seconds (the OCR models download on first use), clicking a box also shows its text with a **Copy text** button,
-   the coordinate table gets a **Text** column, and the JSON and a plain-text file (**Extracted text (TXT)**) can be downloaded.
-
-### Step 9: Sidebar settings
-
-| Setting | What it does | Default |
-|---|---|---|
-| Model toggles | Choose which models run | All models with weights present are on |
-| Language | Language of region names (English and 11 Indic languages) | English |
-| Simplified classes | Folds the 42 classes into 6 families | Off |
-| Gemini model (per-region OCR) | Model used when a region is clicked or transcribed | Gemini 3.1 Flash-Lite |
-| Multi-scale boost | Runs each model at two sizes and merges the boxes, so small or faint regions are found more often (slower) | On |
-| Ensemble fusion | Merges all enabled models into one extra result | On |
-| Confidence threshold | Minimum score for a box (0.05 to 0.95). Lower finds more regions but adds false boxes | 0.25 |
-| NMS IoU | Controls removal of overlapping duplicate boxes (0.10 to 0.95). Higher keeps more overlapping boxes | 0.70 |
-| Inference size | Image size the model sees: 640, 800, 1024 or 1280. 1024 is what the models were trained at; larger sizes help small regions but are slower | 1024 |
-| Reveal speed | How fast boxes appear in the animation: Cinematic, Normal, Fast or Instant | Normal |
-| Reset to defaults | Restores the values above | - |
-
-### Step 10: Troubleshooting
-
-| Problem | Fix |
-|---|---|
-| `python` or `git` is not recognised | Install it, then open a **new** terminal. On Windows, tick "Add to PATH" in the Python installer. |
-| PowerShell blocks `Activate.ps1` | Run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, then activate again. |
-| `No module named ...` (for example `doclayout_yolo`, `huggingface_hub`, `ensemble_boxes`) | The environment is not active, or step 5 did not finish. Activate `.venv` and run `pip install -r requirements.txt` again. |
-| "Weights not downloaded" / "Weights incomplete" | Finish step 6, or use the **⬇ Download weights** button in the sidebar. |
-| The first scan takes about 15 seconds | Normal: the GPU warms up once. Later scans are fast. |
-| Scans are slow | Turn off *Multi-scale boost*, or switch off one model. |
-| No GPU found | The app falls back to the CPU automatically. The sidebar shows the device in use. |
-| Port 8501 already in use | `python -m streamlit run app.py --server.port 8502` |
-| Bengali labels show as empty squares | The system needs a Bengali-capable font (Windows has *Nirmala UI* built in). |
-
-### Setup summary for each model
-
-| Model | Needs | Works on | Setup |
-|---|---|---|---|
-| YOLOv10x | `ultralytics` + PyTorch | Windows, Linux, macOS; GPU or CPU | Steps 4 to 6 (weights: `md2_PT_indicdlp_FT.pt`) |
-| DocLayout-YOLO | `doclayout-yolo` + PyTorch | Windows, Linux, macOS; GPU or CPU | Steps 4 to 6 (weights: `doclayout_yolo_indicdlp.pt`) |
-| OCR (EasyOCR) | `easyocr` + PyTorch | Windows, Linux, macOS; GPU or CPU | Installed with the requirements; its Bengali and English models download automatically the first time OCR is used |
-
-All models share one environment (steps 3 to 5).
-
----
-
-## 9. Limitations and future work
-
-**Limitations**
-
-- **Boxes only.** Output is rectangular bounding boxes, not polygons, so slanted or irregular regions are
-  approximated.
-- **Heuristic reading order.** The ordering sorts by position in bands. It can mis-order complex layouts such as
-  multi-column pages with spanning headlines or wrapped figures.
-- **Limited training.** YOLOv10x and DocLayout-YOLO use the published checkpoints; no model was trained here. The
-  contribution of multi-scale and ensemble fusion has not been benchmarked on the full test set.
-- **Hierarchical classes.** Distinguishing headline levels, list levels and question levels depends on subtle size
-  cues and gives the lowest per-class scores.
-- **Translations.** The Bengali labels are for display and need native-speaker review before formal use.
-- **One page at a time.** There is no multi-page PDF handling.
-
-**Future work**
-
-- Quantitative evaluation of multi-scale and ensemble fusion on the IndicDLP test split, with per-class AP.
-- Tuned per-model fusion weights instead of equal weighting.
-- Multi-page PDF input and batch processing.
-- A learned reading-order model and OCR with a Bengali-specialised engine and reading-order-aware assembly of the extracted text.
-- Additional export formats (COCO JSON, PAGE-XML, HTML).
-
----
-
-## 10. Project structure
-
-| Path | What it is |
-|---|---|
-| `app.py` | The Streamlit app: animations, live reveal, multi-scale inference, ensemble fusion, localised results, exports |
-| `i18n.py` | Names for all 42 classes in English and 11 Indic languages |
-| `annotation_view/` | Custom Streamlit component that draws the clickable region boxes |
-| `ESPCN_x2.pb` | ESPCN x2 super-resolution weights used to upscale crops |
-| `data/` | Sample pages for the gallery and the dataset YAML (`indic.yaml`) |
-| `doclayout-yolo/` | Training, evaluation and prediction scripts for DocLayout-YOLO |
-| `guidelines/` | The IndicDLP annotation guideline (PDF) |
-| `requirements.txt` | Python dependencies for the app |
-| `.env` | Optional, not in git: `GEMINI_API_KEY=...` for Gemini OCR |
-| `weights/` | Model checkpoints (downloaded separately, not in git) |
-| `docs/images/` | Sample annotated dataset pages and the class-count table shown in Section 3 |
-
----
-
-## 11. References
-
-### 11.1 Libraries
-
-[Ultralytics YOLOv10](https://github.com/ultralytics/ultralytics),
-[DocLayout-YOLO](https://github.com/opendatalab/DocLayout-YOLO),
-[ensemble-boxes](https://github.com/ZFTurbo/Weighted-Boxes-Fusion), [Streamlit](https://streamlit.io) and PyTorch.
-
-### 11.2 References
-
-1. A. Wang, H. Chen, L. Liu, et al. *YOLOv10: Real-Time End-to-End Object Detection.* NeurIPS 2024.
-2. Z. Zhao, H. Kang, B. Wang, C. He. *DocLayout-YOLO: Enhancing Document Layout Analysis through Diverse Synthetic
-   Data and Global-to-Local Adaptive Perception.* arXiv:2410.12628, 2024.
-3. R. Solovyev, W. Wang, T. Gabruseva. *Weighted Boxes Fusion: Ensembling boxes from different object detection
-   models.* Image and Vision Computing, 2021.
-4. O. Nath, S. Kukkala, M. Khapra, R. K. Sarvadevabhatla. *IndicDLP: A Foundational Dataset for Multi-Lingual and
-   Multi-Domain Document Layout Parsing.* arXiv:2512.20236, 2025.
-   [arXiv](https://arxiv.org/abs/2512.20236), [project page](https://indicdlp.github.io/),
-   [dataset](https://huggingface.co/datasets/ai4bharat/indicdlp).

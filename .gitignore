@@ -17,3 +17,5 @@ weights/
 
 # Local environment file with API keys, never commit
 .env
+
+data/batch06_yolo/

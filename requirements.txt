@@ -12,6 +12,7 @@ opencv-contrib-python   # cv2.dnn_superres for the ESPCN x2 crop upscaler
 easyocr                  # offline text extraction (OCR) for Bengali and English
 google-genai             # per-region Gemini OCR
 python-dotenv            # reads GEMINI_API_KEY from a local .env file
+pymupdf>=1.24            # renders PDF pages for multi-page PDF input
 
 # PyTorch is NOT listed on purpose: install the build that matches your hardware first, see README.md.
 #   NVIDIA GPU (CUDA 12.8):  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
