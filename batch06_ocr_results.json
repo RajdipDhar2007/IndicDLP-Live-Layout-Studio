@@ -1,12 +1,12 @@
 {
-  "regions": 150,
-  "reference_chars": 24868,
-  "cer": 0.7313414830304005,
+  "regions": 250,
+  "reference_chars": 43685,
+  "cer": 0.6676204646903972,
   "cer_per_class": {
-    "Headline": 0.6013179571663921,
-    "Subtitle": 0.6057791537667698,
-    "BodyText": 0.7399536321483772
+    "Headline": 0.24669603524229075,
+    "Subtitle": 0.2308265078183172,
+    "BodyText": 0.6934501419661708
   },
-  "median_ms_per_region": 895.2735499951814,
+  "median_ms_per_region": 164.4915500000934,
   "engine": "EasyOCR bn+en"
 }

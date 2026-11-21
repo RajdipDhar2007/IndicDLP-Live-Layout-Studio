@@ -19,3 +19,11 @@ weights/
 .env
 
 data/batch06_yolo/
+
+# Batch 06 working data: page images, Label Studio exports/backups, ensemble output, OCR logs
+batch_06/
+export_*/
+out/
+backup/
+backend*.log
+ocr_progress.json

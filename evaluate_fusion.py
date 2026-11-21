@@ -10,7 +10,7 @@ It is NOT part of this repository: https://huggingface.co/datasets/ai4bharat/ind
 Weights are tuned on the validation split and the numbers are reported on the test split, so the test split is never
 used to choose a setting.
 
-Mode 2: a human-corrected Label Studio export (as produced by batch_06_ensemble/export_annotations.py). No download needed.
+Mode 2: a human-corrected Label Studio export (as produced by export_annotations.py). No download needed.
 
   python evaluate_fusion.py --ls-images <export>/images --ls-json <export>/json --out-prefix batch06
 

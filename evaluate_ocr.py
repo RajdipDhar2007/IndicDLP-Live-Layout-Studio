@@ -1,6 +1,6 @@
 """Character error rate (CER) of EasyOCR (Bengali + English) on annotated regions of a Label Studio export.
 
-  python evaluate_ocr.py --export <export_dir> [--limit 250]
+  python evaluate_ocr.py --export <export_dir> --images batch_06 [--limit 250]
 
 Reference text is the `ocr_text` stored with each region (Gemini transcription kept by the annotator, so it is a
 silver standard, not independent ground truth). Boxes are the annotated boxes, so only the OCR step is measured,
@@ -41,10 +41,11 @@ def edit_distance(a: str, b: str) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--export", required=True, type=Path)
+    ap.add_argument("--images", type=Path, help="folder with the ORIGINAL page images (default: <export>/images, which has boxes drawn on it)")
     ap.add_argument("--limit", type=int, default=250)
     ap.add_argument("--cpu", action="store_true")
     a = ap.parse_args()
-    files = sorted((a.export / "images").glob("*.jpg"))[1::2]
+    files = sorted((a.images or a.export / "images").glob("*.jpg"))[1::2]
     regions = []
     for f in files:
         d = json.loads((a.export / "json" / (f.stem + ".json")).read_text(encoding="utf-8"))

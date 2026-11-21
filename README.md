@@ -39,7 +39,7 @@ It adds multi-scale inference and Weighted Boxes Fusion to merge several passes 
 It animates detection region by region, shows the 42 class names in English, Bengali and ten other Indic languages, and reads the text of each region with OCR (Gemini or EasyOCR).
 Multi-page PDFs can be processed as a batch, and results export as PNG, JSON, COCO JSON, PAGE-XML, HTML and text in reading order.
 The published checkpoints (57.7 and 54.5 mAP[50:95]) are used as released, and one of them is also fine-tuned on annotated Bengali newspaper pages.
-On 50 held-out, human-annotated Bengali newspaper pages the ensemble reached 33.7 mAP[50:95] against 29.6 and 29.4 for the two boosted single models, at about 0.39 s per page on a GPU.
+On 50 held-out, human-corrected Bengali newspaper pages the ensemble reached 97.9 mAP[50:95] against 89.8 and 90.3 for the two boosted single models, at about 0.39 s per page on a GPU. These figures are circular (the annotators corrected the ensemble's own output, Section 5.4), so they show agreement with that output rather than independent accuracy.
 The system makes layout detectors usable and inspectable, and its limits are listed for future work.
 
 ---
@@ -285,101 +285,90 @@ No hypothesis test or confidence interval was computed. The speed sample (11 ima
 
 ### 5.4 Evaluation against human annotation (Batch 06)
 
-**Data.** 100 scanned Bengali newspaper pages (March 1946), 10,192 human-corrected regions in 10 classes. The 50 even-numbered pages tune the fusion weights; the 50 odd-numbered pages (5,350 regions, counts per class below) are held out and scored. The detectors' 42 classes are folded onto the 10 annotation classes (`LS_CLASS_MAP` in `evaluate_fusion.py`; advertisements are counted as `Image`, all other text classes as `BodyText`, which is an assumption). Metric: COCO-style AP over IoU 0.50-0.95 (101-point), confidence cut-off 0.001, inference size 1024 (second scale 1280). Reproduce with:
+**Data.** 100 scanned Bengali newspaper pages (March 1946) from the Label Studio export of 2026-11-21: 9,621 regions in 5 classes (BodyText 5,232, Image 1,547, Subtitle 1,530, Headline 1,251, Caption 61). The other five classes of the earlier export (Header, Footer, Folio, PageNumber, Flag) are no longer annotated, so they have no ground truth and are shown as "-". The 50 even-numbered pages tune the fusion weights; the 50 odd-numbered pages (5,106 regions, counts per class below) are held out and scored. The detectors' 42 classes are folded onto the annotation classes (`LS_CLASS_MAP` in `evaluate_fusion.py`; advertisements are counted as `Image`, all other text classes as `BodyText`, which is an assumption). Metric: COCO-style AP over IoU 0.50-0.95 (101-point), confidence cut-off 0.001, inference size 1024 (second scale 1280). The models are run on the **original** page images (`batch_06/`); the export's own `images/` folder has the boxes drawn on it and must not be used for scoring or training. Reproduce with:
 
 ```
-python evaluate_fusion.py --ls-images <export>/images --ls-json <export>/json --out-prefix batch06
+python evaluate_fusion.py --ls-images batch_06 --ls-json export_2026-11-21/json --out-prefix batch06
 ```
 
 **Overall (50 held-out pages)**
 
 | Pipeline | mAP50 | mAP[50:95] |
 |---|---|---|
-| YOLOv10x, single scale | 37.5 | 23.0 |
-| YOLOv10x, multi-scale boost | 44.8 | 29.6 |
-| DocLayout-YOLO, single scale | 37.1 | 26.3 |
-| DocLayout-YOLO, multi-scale boost | 42.0 | 29.4 |
-| **Ensemble fusion, equal weights** | **49.4** | **33.7** |
-| Ensemble fusion, tuned weights (YOLOv10x 1.0, DocLayout-YOLO 1.5) | 48.7 | 33.7 |
+| YOLOv10x, single scale | 88.5 | 84.1 |
+| YOLOv10x, multi-scale boost | 93.0 | 89.8 |
+| DocLayout-YOLO, single scale | 88.9 | 85.0 |
+| DocLayout-YOLO, multi-scale boost | 92.9 | 90.3 |
+| **Ensemble fusion, equal weights** | **99.5** | **97.9** |
+| Ensemble fusion, tuned weights (equal, 1.0 / 1.0) | 99.5 | 97.9 |
 
-```mermaid
-xychart-beta
-    title "mAP[50:95] on 50 held-out annotated pages (higher is better)"
-    x-axis ["YOLOv10x", "DocLayout", "YOLOv10x+boost", "DocLayout+boost", "Ensemble"]
-    y-axis "mAP[50:95]" 20 --> 36
-    bar [23.0, 26.3, 29.6, 29.4, 33.7]
-```
+**Read this table with care: it is circular.** The annotators corrected pre-annotations produced by this very ensemble (`run_ensemble.py`, same settings as the app), so the ground-truth boxes are largely the ensemble's own output. The ensemble scoring 99.5 mAP50 is the signature of that. The table therefore measures how closely each pipeline reproduces the corrected ensemble output, not how accurate each is against independent ground truth. The earlier version of this section (an older, less-corrected export, scored on images with the boxes drawn on them) reported 33.7 mAP[50:95] for the ensemble; those figures are superseded and should not be compared with these.
 
 **Per-class AP[50:95] (held-out pages)**
 
 | Class | GT boxes | YOLOv10x | YOLOv10x + boost | DocLayout | DocLayout + boost | Ensemble | Ensemble, tuned |
 |---|---|---|---|---|---|---|---|
-| Headline | 683 | 33.6 | 35.6 | 32.0 | 37.5 | 39.9 | 40.5 |
-| Subtitle | 745 | 10.6 | 11.8 | 5.5 | 6.4 | 11.9 | 10.0 |
-| BodyText | 2963 | 44.8 | 48.3 | 60.4 | 64.7 | 64.1 | 65.1 |
-| Caption | 22 | 11.5 | 9.9 | 11.6 | 13.8 | 14.2 | 12.6 |
-| Image | 693 | 62.9 | 63.4 | 65.9 | 68.3 | 68.5 | 70.2 |
-| Header | 62 | 24.8 | 27.2 | 32.3 | 31.1 | 30.5 | 31.1 |
-| Footer | 2 | 25.0 | 65.3 | 0.0 | 10.1 | 60.3 | 55.3 |
-| Folio | 99 | 1.4 | 3.0 | 4.4 | 6.2 | 5.3 | 6.0 |
-| PageNumber | 71 | 0.4 | 2.9 | 0.7 | 0.8 | 2.6 | 2.3 |
-| Flag | 10 | 15.0 | 29.0 | 50.2 | 55.3 | 40.1 | 43.5 |
+| Headline | 683 | 82.7 | 89.3 | 87.4 | 92.6 | 96.6 | 96.6 |
+| Subtitle | 745 | 71.1 | 76.7 | 87.2 | 94.1 | 97.1 | 97.1 |
+| BodyText | 2963 | 92.5 | 95.1 | 92.8 | 95.3 | 97.9 | 97.9 |
+| Caption | 22 | 80.1 | 92.4 | 66.4 | 76.2 | 98.8 | 98.8 |
+| Image | 693 | 94.3 | 95.8 | 91.3 | 93.5 | 98.9 | 98.9 |
+| Header, Footer, Folio, PageNumber, Flag | 0 | - | - | - | - | - | - |
 
 **Fusion-weight tuning** (DocLayout-YOLO weight relative to YOLOv10x = 1.0, scored on the 50 tuning pages, mAP[50:95]):
 
 | DocLayout-YOLO weight | 0.5 | 0.75 | 1.0 | 1.5 | 2.0 |
 |---|---|---|---|---|---|
-| mAP[50:95] on tuning pages | 36.3 | 37.6 | 39.1 | **40.8** | 40.7 |
+| mAP[50:95] on tuning pages | 96.5 | 97.8 | **98.4** | 97.7 | 97.4 |
 
-Weight 1.5 is best on the tuning pages (+1.7 over equal weights) but gives **no gain on the held-out pages** (33.7 vs 33.7 mAP[50:95], and 0.7 lower mAP50). The tuned weights are therefore saved as `batch06_fusion_weights.json` and **not** enabled by default; copying the file to `fusion_weights.json` makes the app use them.
+Equal weights (1.0) are best, so `batch06_fusion_weights.json` equals the default and no override is needed.
 
-**Caveats.** (1) The folder name and `run_ensemble.py` suggest the annotators corrected pre-annotations produced by this ensemble, which would favour the ensemble and its box geometry; the comparison with the single models is therefore optimistic for the ensemble. (2) Caption (22), Footer (2) and Flag (10) have too few held-out boxes for their AP to be reliable. (3) One newspaper and period only.
+**Caveats.** (1) The circularity above. (2) Caption (22 held-out boxes) is too small for a reliable AP. (3) One newspaper and period only.
 
 ### 5.5 Fine-tuning on the annotated pages
 
-YOLOv10x fine-tuned on 40 Batch 06 pages (`weights/yolov10x_batch06_ft.pt`, not committed), scored on the same 50 held-out pages and with the same metric as Section 5.4:
+YOLOv10x fine-tuned on 40 Batch 06 pages (`weights/yolov10x_batch06_ft.pt`, not committed), trained and scored on the original page images, on the same 50 held-out pages and with the same metric as Section 5.4:
+
+```
+python finetune_batch06.py --export export_2026-11-21 --images batch_06
+```
 
 | Pipeline (50 held-out pages) | mAP50 | mAP[50:95] |
 |---|---|---|
-| Ensemble fusion of the two original models (Section 5.4) | 49.4 | 33.7 |
-| **Fine-tuned YOLOv10x, single scale** | 71.3 | 61.5 |
-| **Fine-tuned YOLOv10x, multi-scale boost** | 72.7 | 63.8 |
+| Ensemble fusion of the two original models (Section 5.4) | 99.5 | 97.9 |
+| **Fine-tuned YOLOv10x, single scale** | 72.0 | 65.4 |
+| **Fine-tuned YOLOv10x, multi-scale boost** | 73.1 | 67.1 |
 
 | Class | GT boxes | AP[50:95], single | AP[50:95], boost |
 |---|---|---|---|
-| Headline | 683 | 84.2 | 86.0 |
-| Subtitle | 745 | 66.6 | 71.2 |
-| BodyText | 2963 | 90.3 | 91.4 |
-| Caption | 22 | 16.4 | 19.8 |
-| Image | 693 | 81.8 | 82.4 |
-| Header | 62 | 77.5 | 83.6 |
-| Footer | 2 | 0.0 | 0.0 |
-| Folio | 99 | 78.7 | 79.0 |
-| PageNumber | 71 | 36.2 | 36.3 |
-| Flag | 10 | 83.5 | 88.6 |
+| Headline | 683 | 77.1 | 79.2 |
+| Subtitle | 745 | 69.9 | 72.3 |
+| BodyText | 2963 | 86.1 | 86.9 |
+| Caption | 22 | 14.2 | 16.2 |
+| Image | 693 | 79.5 | 80.8 |
 
-The gain is very large on the previously weakest classes (Folio 6.0 to 78.7, Subtitle 10-12 to 67-71), but it must **not** be read as a general improvement of the detector: (1) the model is trained and tested on the same newspaper, period and annotation style; (2) it learns the 10-class annotation scheme directly, while the original models had their 42 classes folded onto it by an assumed mapping, which alone costs accuracy; (3) the held-out annotations probably began as the ensemble's output (Section 5.4). Caption, Footer and Flag have too few boxes to judge, and PageNumber stays low. Whether it generalises to other newspapers or to English pages was not tested, and it is a one-run result (seed 0, no repeats).
+(The mAP50 and mAP[50:95] columns average over the 10 classes in the model's head, of which five have no ground truth and are skipped.) The fine-tuned model scores **below** the untouched ensemble here (67.1 vs 97.9), which is the opposite of the earlier result, and the reason is the circularity of Section 5.4: the labels now follow the ensemble's box style, which a model trained on 40 pages cannot match. This comparison therefore cannot show whether fine-tuning helps. It is a one-run result (seed 0, no repeats) on one newspaper; the earlier large gains on Folio and Header cannot be reproduced because those classes are no longer annotated.
 
 ### 5.6 OCR check (EasyOCR, Bengali + English)
 
-`evaluate_ocr.py` crops 150 random text regions of the held-out pages using the annotated boxes and compares EasyOCR's text with the transcription stored in the export (a Gemini transcription kept by the annotator, so a silver standard, not independent ground truth).
+`evaluate_ocr.py` crops 250 random text regions of the held-out pages from the original images using the annotated boxes and compares EasyOCR's text with the transcription stored in the export (a Gemini transcription kept by the annotator, so a silver standard, not independent ground truth).
 
 | Measure | Value |
 |---|---|
-| Character error rate, all 150 regions | **73.1 %** |
-| Headline / Subtitle / BodyText | 60.1 % / 60.6 % / 74.0 % |
-| Median time per region (CPU) | 895 ms |
+| Character error rate, all 250 regions | **66.8 %** |
+| Headline / Subtitle / BodyText | 24.7 % / 23.1 % / 69.3 % |
+| Median time per region (GPU) | 164 ms |
 
-EasyOCR is therefore poor on these archival Bengali scans: roughly three characters in four are wrong against the reference. Gemini remains the more accurate engine for this material; a Bengali-specialised OCR is still needed for an offline option. Reading order was not scored: the export's stored region order is the old heuristic's own output, so agreement with it (Kendall tau 0.79 for the old rule, 0.77 for the XY-cut) says nothing about which is better.
+EasyOCR is acceptable on short, large display text (headlines and subtitles, about a quarter of characters wrong) but poor on body text, where roughly seven characters in ten are wrong against the reference. Gemini remains the more accurate engine for this material; a Bengali-specialised OCR is still needed for an offline option. (The earlier figure of 73.1 % came from cropping boxes out of images with the boxes drawn on them, on CPU.) Reading order was not scored: the export's stored region order is the old heuristic's own output, so agreement with it says nothing about which rule is better.
 
 ### 5.7 Observations
 
 - The ensemble found about 65 % more regions per page than either single model (43.5 vs about 26), because the two models often disagree (only 63-67 % of one model's boxes are matched by the other) and WBF keeps a region when only one model finds it. Without ground truth we cannot say how many of the extra regions are correct, and some may be false positives or near-duplicates.
 - Mean confidence was almost unchanged (0.619 vs 0.612-0.615).
 - Multi-scale inference roughly doubles the time (92 to 202 ms and 84 to 191 ms), and the full ensemble costs about 0.39 s per page, which is acceptable for interactive use on a GPU.
-- On the human-annotated pages the multi-scale boost lifted mAP[50:95] by 6.6 points for YOLOv10x (23.0 to 29.6) and 3.1 for DocLayout-YOLO (26.3 to 29.4), and the ensemble added a further 4.1-4.3 points over either boosted model (33.7). See the bias caveat in Section 5.4.
+- On the human-corrected pages the multi-scale boost lifted mAP[50:95] by 5.7 points for YOLOv10x (84.1 to 89.8) and 5.3 for DocLayout-YOLO (85.0 to 90.3), and the ensemble added a further 7.6-8.1 points over either boosted model (97.9). The ensemble's lead is inflated by the circularity described in Section 5.4.
 - DocLayout-YOLO is clearly better on body text (64.7 vs 48.3) and flags; YOLOv10x is better on subtitles. The ensemble is best or near-best on most classes, and weakest on small page furniture (Folio, PageNumber below 6 AP), exactly the classes the report names as hard.
-- Tuning the model weights did not generalise (Section 5.4), so equal weights remain the default.
+- Equal fusion weights were best on the tuning pages (Section 5.4), so they remain the default.
 - Cost is dominated by page density: the dense Bengali newspaper `np_bn_000047_0.png` took 1.02 s in ensemble mode, about four times the average.
 
 ---
@@ -389,19 +378,19 @@ EasyOCR is therefore poor on these archival Bengali scans: roughly three charact
 - **A usable system was delivered.** Two research checkpoints now run behind one interface that supports live reveal, clickable cutouts, 11 Indic languages for labels, OCR, multi-page PDF input, batch processing, and export as PNG, JSON, COCO JSON, PAGE-XML, HTML and reading-order text, and that falls back gracefully when a model or weights file is missing.
 - **Ensemble fusion increases coverage.** On the 11 sample pages it returned 478 regions against 284 and 289 for the single models, and kept 95.4 % and 99.7 % of their boxes. The two detectors agree on only about two thirds of their boxes, so they are complementary.
 - **The cost is acceptable.** About 0.39 s per page for the full boosted ensemble on a GPU, against 0.08-0.09 s for one model at one size.
-- **Fusion improves accuracy on annotated Bengali newspaper pages.** On 50 held-out pages, mAP[50:95] rose from 23.0 / 26.3 (single scale) to 29.6 / 29.4 with the multi-scale boost and to 33.7 with the ensemble. The gain is probably overstated because the annotations were likely started from this ensemble's output. On the IndicDLP test split the published figures are 57.7 (YOLOv10x) and 54.5 (DocLayout-YOLO); the new `evaluate_fusion.py` can repeat the evaluation there, but that dataset was not available here.
-- **Fine-tuning on in-domain annotated pages helps a lot, in that domain.** Fine-tuned YOLOv10x reached 61.5 mAP[50:95] (63.8 with the boost) against 33.7 for the ensemble of the original models on the same held-out pages, mainly through folio, subtitle and header. This is one newspaper, one run and one annotation scheme, so it shows the value of in-domain data rather than a general gain.
-- **EasyOCR is weak here** (73 % character error rate against the stored transcription), so offline Bengali OCR remains an open problem.
-- **Per-model fusion weights did not generalise.** The best weights on the tuning pages (1.0 / 1.5) gave +1.7 mAP there and +0.0 on the held-out pages, so equal weights are kept.
+- **Fusion agrees best with the human-corrected annotations, but that is circular.** On 50 held-out pages, mAP[50:95] was 84.1 / 85.0 (single scale), 89.8 / 90.3 (multi-scale boost) and 97.9 (ensemble). Because the annotations started from this ensemble's output, this is not independent evidence of accuracy. On the IndicDLP test split the published figures are 57.7 (YOLOv10x) and 54.5 (DocLayout-YOLO); `evaluate_fusion.py` can repeat that evaluation, but the dataset was not available here.
+- **Fine-tuning could not be shown to help.** Fine-tuned YOLOv10x reached 65.4 mAP[50:95] (67.1 with the boost) on the held-out pages, below the ensemble's 97.9, because the labels follow the ensemble's own box style. One run, one newspaper, five annotated classes.
+- **EasyOCR is weak here** (67 % character error rate against the stored transcription, 69 % on body text), so offline Bengali OCR remains an open problem.
+- **Equal fusion weights are kept.** They scored best on the tuning pages (98.4 vs 97.7 for 1.0 / 1.5).
 - **Weak spots are consistent.** Small page furniture, hierarchical classes (headline, list and question levels) and rare classes get the lowest confidence, and a small advertisement was misclassified in Demo 2.
 
 **Limitations.** Rectangular boxes only; the reading order is a geometric XY-cut, not a learned model (it can fail on interleaved or overlapping boxes), and it has not been scored against human reading-order labels; the OCR text is assembled in that order but uses the same general OCR engines (no Bengali-specialised OCR was added); PDFs are rendered at 150 dpi and capped at 200 pages; Bengali and Indic label translations need native-speaker review; the two released detectors were not re-trained on IndicDLP (only one fine-tune on 40 newspaper pages was run); the speed-benchmark pages carry no ground truth and include two non-page images; the accuracy evaluation covers one newspaper from one period with 10 coarse classes; EasyOCR is slow (518 ms per region); Gemini OCR sends region images to Google.
 
 **Recommendations for future work**
 
-1. Run `evaluate_fusion.py` on the IndicDLP validation and test splits (per-class AP over all 42 classes) and re-tune the fusion weights there; the weights tuned on 50 newspaper pages did not generalise.
+1. Run `evaluate_fusion.py` on the IndicDLP validation and test splits (per-class AP over all 42 classes) and re-tune the fusion weights there; the weights tuned on newspaper pages are not independent evidence.
 2. Obtain independently annotated pages (not started from the ensemble's output) so the fusion gain can be measured without bias, and add a significance test.
-3. Collect human reading-order labels, evaluate the XY-cut against them and train a learned reading-order model; add and evaluate a Bengali-specialised OCR (EasyOCR's 73 % error rate is the baseline to beat).
+3. Collect human reading-order labels, evaluate the XY-cut against them and train a learned reading-order model; add and evaluate a Bengali-specialised OCR (EasyOCR's 67 % error rate is the baseline to beat).
 4. Test the fine-tuned detector on other newspapers and on English pages, repeat with several seeds, and merge the 10-class scheme back into the 42-class output (or fine-tune all 42 classes) so the app can offer it next to the original models.
 5. Add per-page quality controls to the batch mode (retry, resume, per-page settings) and larger PDF support.
 
@@ -429,7 +418,7 @@ https://github.com/RajdipDhar2007/IndicDLP-Live-Layout-Studio
 ### Appendix 4: Other documents
 
 - Benchmark data: `benchmark_results.json`, produced by `benchmark.py` (both in the repository).
-- Evaluation on human-annotated pages: `batch06_evaluation_results.json`, `batch06_evaluation_per_class.md`, `batch06_fusion_weights.json`, produced by `evaluate_fusion.py`. The annotated pages themselves are in the local folder `batch_06_ensemble/export_2026-11-20` (not in the repository).
+- Evaluation on human-annotated pages: `batch06_evaluation_results.json`, `batch06_evaluation_per_class.md`, `batch06_fusion_weights.json`, produced by `evaluate_fusion.py`. The annotated pages themselves are in the local folder `export_2026-11-21` (100 pages, 9,621 regions, 8,071 with OCR text; not in the repository).
 - IndicDLP annotation guideline: `guidelines/ANNOTATION_GUIDELINE_BY_CATEGORY.pdf`.
 - Copy of this report: this `README.md`. A PDF copy and the presentation can be added to the repository or Google Drive and linked here.
 

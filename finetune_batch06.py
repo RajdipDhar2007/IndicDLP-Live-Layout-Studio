@@ -1,7 +1,7 @@
 """Fine-tunes YOLOv10x (from the IndicDLP checkpoint) on human-annotated Bengali newspaper pages (a Label Studio export),
 then scores it on pages that were never used for training or checkpoint selection.
 
-  python finetune_batch06.py --export <export_dir> [--epochs 40]
+  python finetune_batch06.py --export <export_dir> --images batch_06 [--epochs 40]
 
 Split of the 100 pages (by position in the sorted file list), identical to evaluate_fusion.py:
   odd-numbered pages (50)            held-out TEST pages, never touched by training or model selection
@@ -58,11 +58,13 @@ def make_dataset(images_dir: Path, json_dir: Path) -> dict[str, list[Path]]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--export", required=True, type=Path)
+    ap.add_argument("--images", type=Path, help="folder with the ORIGINAL page images (default: <export>/images, which has boxes drawn on it)")
     ap.add_argument("--epochs", type=int, default=40)
     ap.add_argument("--imgsz", type=int, default=1024)
     ap.add_argument("--skip-train", action="store_true", help="only evaluate an existing weights/yolov10x_batch06_ft.pt")
     a = ap.parse_args()
-    splits = make_dataset(a.export / "images", a.export / "json")
+    img_dir = a.images or a.export / "images"
+    splits = make_dataset(img_dir, a.export / "json")
     print({k: len(v) for k, v in splits.items()})
 
     from ultralytics import YOLO
