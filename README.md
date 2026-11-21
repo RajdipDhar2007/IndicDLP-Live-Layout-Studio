@@ -4,8 +4,9 @@
 
 *(Project title intentionally left blank)*
 
-**Rajdip Dhar**
-Computer Science and Engineering, Heritage Institute of Technology
+**Name:** Rajdip Dhar  
+**Course/Batch:** Computer Science and Engineering  
+**Institute:** Heritage Institute of Technology
 
 **Period of Internship:** 21st September 2026 - 30th November 2026
 
