@@ -176,6 +176,11 @@ flowchart LR
 | `tests/` | Unit tests (`python -m pytest tests -q`) |
 | `doclayout-yolo/` | Train / evaluate / predict scripts for DocLayout-YOLO |
 | `ESPCN_x2.pb` | Super-resolution weights |
+| `yolo26/` | `prepare_data.py`, `train.py`, `evaluate.py`: fine-tune and score YOLO26 on IndicDLP; the app loads `weights/yolo26_indicdlp.pt` if present |
+| `dataset_builder.py`, `ad_dataset.py`, `models_benchmark.py`, `train_benchmark.py` | Ad vs Non-Ad classifier benchmark (LeNet-5 and ResNet-18, aspect-ratio letterboxing to 224x224, class-weighted loss); notebook `ad_classifier_benchmark.ipynb` |
+| `annotator_standalone.py`, `run_hybrid_gpu_gemini_annotator.py` | Auto-annotators: YOLO layout detection plus Gemini / EasyOCR text, written as a Label Studio pre-annotation JSON (set `INPUT_SCANS_DIR`, `OUTPUT_JSON_PATH`, `GEMINI_API_KEYS`) |
+| `model_inference.py` | Headless model loading and inference without Streamlit |
+| `docs/benchmark/` | Benchmark plan, evaluation report and annotator setup guide from the upstream branch |
 | `requirements.txt`, `run_app.bat` | Dependencies and Windows launcher |
 
 ### 4.6 How to run

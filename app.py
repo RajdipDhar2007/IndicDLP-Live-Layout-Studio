@@ -79,6 +79,8 @@ MODELS = {
                           "md2_PT_indicdlp_FT.pt", "yolo", "57.7", "⚡", 64280114),
     "doclayout": ModelSpec("doclayout", "DocLayout-YOLO", "Document-specialised YOLOv10 variant with global-to-local perception.",
                            "doclayout_yolo_indicdlp.pt", "doclayout", "54.5", "🧭", 161475350),
+    "yolo26": ModelSpec("yolo26", "YOLO26", "Latest Ultralytics YOLO (extra-large size), NMS-free, fine-tuned on IndicDLP's 42 layout classes (train it with yolo26/train.py).",
+                        "yolo26_indicdlp.pt", "yolo", "43.4", "🚀", 1),
 }
 FUSION = ModelSpec("fusion", "Ensemble Fusion", "All models voting together: boxes from every model merged with weighted box fusion.",
                    "", "fusion", "-", "🧬", 0)
@@ -593,7 +595,9 @@ def sidebar() -> dict:
             on = st.toggle(label, value=ok, key=f"use_{key}", help=why or spec.blurb)
             if on and ok:
                 chosen.append(key)
-            if not ok:
+            if not ok and key == "yolo26":
+                st.caption(f"⚠️ {why} Train it with `yolo26/train.py`.")
+            elif not ok:
                 if st.button(f"⬇ Download {spec.title} weights", key=f"dl_{key}"):
                     download_weights(spec)
                     st.session_state["_enable_after_download"] = key  # applied before the toggle is drawn on the rerun
