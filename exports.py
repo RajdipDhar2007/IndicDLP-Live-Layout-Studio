@@ -56,6 +56,8 @@ def coco_json(pages: list[dict], class_names: list[str]) -> str:
                    "iscrowd": 0, "score": round(float(d["conf"]), 4), "reading_order": order}
             if d.get("text"):
                 ann["text"] = d["text"]
+            if d.get("translation"):
+                ann["text_en"] = d["translation"]
             annotations.append(ann)
     return json.dumps({
         "info": {"description": "IndicDLP Live Layout Studio detections", "date_created": datetime.date.today().isoformat()},
@@ -101,7 +103,9 @@ def page_xml(page: dict) -> str:
         lines.append(f"    <{element} {attrs}>")
         lines.append(f'      <Coords points="{pts}"/>')
         if d.get("text"):
-            lines.append(f'      <TextEquiv conf="{float(d["conf"]):.4f}"><Unicode>{escape(d["text"])}</Unicode></TextEquiv>')
+            lines.append(f'      <TextEquiv index="0" conf="{float(d["conf"]):.4f}"><Unicode>{escape(d["text"])}</Unicode></TextEquiv>')
+            if d.get("translation"):  # the English translation is a second TextEquiv of the same region
+                lines.append(f'      <TextEquiv index="1" comments="English translation"><Unicode>{escape(d["translation"])}</Unicode></TextEquiv>')
         lines.append(f"    </{element}>")
     lines += ["  </Page>", "</PcGts>"]
     return "\n".join(lines)
@@ -133,6 +137,8 @@ def _crop_uri(image, box) -> str | None:
 def _html_block(d: dict, image) -> str:
     src = _src(d)
     text = escape(d.get("text") or "").replace("\n", "<br>")
+    if text and d.get("translation"):  # English translation right below the text of the region
+        text += f'<span class="en" lang="en">{escape(d["translation"]).replace(chr(10), "<br>")}</span>'
     box = ",".join(str(round(float(v))) for v in d["box"])
     meta = f'data-class="{escape(src)}" data-conf="{float(d["conf"]):.3f}" data-bbox="{box}"'
     if src in _IMAGE:
@@ -172,6 +178,8 @@ h1{{font-size:1.9rem;line-height:1.25;margin:.6em 0 .3em}} h2{{font-size:1.4rem;
 p{{margin:.5em 0}} .caption{{font-size:.88rem;color:#555;font-style:italic}}
 .furniture{{font-size:.75rem;color:#888;margin:.3em 0}} figure{{margin:.9em 0;text-align:center}}
 figure img{{max-width:100%;border:1px solid #ddd;border-radius:4px}} .ph{{color:#999}}
+.en{{display:block;margin-top:.25em;font:italic 400 .82em/1.5 "Segoe UI",system-ui,sans-serif;color:#2f5d8a}}
+h1 .en,h2 .en,h3 .en{{font-size:.5em}}
 </style></head><body>
 {chr(10).join(sections)}
 </body></html>"""

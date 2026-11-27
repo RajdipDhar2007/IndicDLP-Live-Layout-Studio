@@ -61,6 +61,14 @@ def reading_order(dets: list[dict], size: tuple[int, int] | None = None) -> list
     return _xy_cut(list(dets), max(float(size[0]), 1.0), max(float(size[1]), 1.0))
 
 
-def assemble_text(dets: list[dict], size: tuple[int, int] | None = None, sep: str = "\n\n") -> str:
-    """The OCR text of all regions joined in reading order. Regions without text are skipped."""
-    return sep.join(t for d in reading_order(dets, size) if (t := (d.get("text") or "").strip()))
+def assemble_text(dets: list[dict], size: tuple[int, int] | None = None, sep: str = "\n\n", translation: bool = True) -> str:
+    """The OCR text of all regions joined in reading order. Regions without text are skipped. When a region has an
+    English translation it is written on the lines right below its text (unless `translation` is False)."""
+    blocks = []
+    for d in reading_order(dets, size):
+        text = (d.get("text") or "").strip()
+        if not text:
+            continue
+        english = (d.get("translation") or "").strip() if translation else ""
+        blocks.append(f"{text}\n{english}" if english else text)
+    return sep.join(blocks)

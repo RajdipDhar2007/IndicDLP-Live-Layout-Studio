@@ -15,6 +15,7 @@ import io
 import json
 import math
 import os
+import re
 import statistics
 import threading
 import time
@@ -40,7 +41,6 @@ from layout_order import assemble_text, reading_order as _order_regions
 import exports
 import pdfio
 from layout_order import assemble_text, reading_order as _order_regions
-from news import news_html
 
 try:
     from dotenv import load_dotenv
@@ -56,7 +56,7 @@ EXAMPLE_DIRS = [ROOT / "batch_06"]  # the Sample gallery lists the Batch 06 page
 annotation_view = components.declare_component("indicdlp_annotation_view", path=str(ROOT / "annotation_view"))
 ZENODO = "https://zenodo.org/records/15881917/files/{}?download=1"
 DEFAULTS = dict(ocr_on=True, conf=0.25, iou=0.70, imgsz=1024, speed="Normal", boost=True, fuse=True, lang="en",
-                gemini_model="Gemini 3.1 Flash-Lite (faster)", simplify=False, skip_media=True)
+                gemini_model="Gemini 3.1 Flash-Lite (faster)", translate_model="Gemini 3.1 Flash-Lite (faster)", simplify=False, skip_media=True)
 
 st.set_page_config(page_title="IndicDLP Live Layout Studio", page_icon="📄", layout="wide")
 
@@ -237,6 +237,17 @@ def gemini_key() -> str:
     return key.strip()
 
 
+def translate_key() -> str:
+    """The API key of the Bengali to English translation (a different key from the OCR key)."""
+    key = st.session_state.get("gemini_translate_key") or os.environ.get("GEMINI_TRANSLATE_API_KEY") or ""
+    if not key:
+        try:
+            key = st.secrets.get("GEMINI_TRANSLATE_API_KEY", "")
+        except Exception:
+            key = ""
+    return key.strip()
+
+
 def contact_sheet(items: list[tuple[int, Image.Image]]) -> Image.Image:
     """Stacks the numbered crops into one tall image so a whole page needs a single Gemini request."""
     width = min(1600, max(c.width for _, c in items))
@@ -291,6 +302,7 @@ def ocr_page(page: Image.Image, dets: list[dict], progress=None) -> None:
     todo = [d for d in dets if d["label"] not in NON_TEXT]
     for d in dets:
         d["text"] = ""
+        d["translation"] = ""
 
     def crop_of(d):
         x1, y1, x2, y2 = d["box"]
@@ -316,6 +328,7 @@ def ocr_page(page: Image.Image, dets: list[dict], progress=None) -> None:
             d["text"] = texts.get(i, "")
         if progress:
             progress(n / len(chunks), f"Gemini {n}/{len(chunks)}")
+    translate_dets(dets)  # English translation below the text of every region (needs the translation key)
 
 
 def predict_once(key: str, image: Image.Image, conf: float, iou: float, imgsz: int, device: str) -> list[dict]:
@@ -630,6 +643,12 @@ def sidebar() -> dict:
             st.selectbox(T("Gemini model for per-region OCR"), list(GEMINI_OCR_MODELS), key="gemini_model",
                          help=T("Used when you click a region (or press Transcribe All). Each region is sent only once."))
             st.caption(T("Gemini sends each text region's image to Google."))
+            st.text_input(T("Translation API key (Bengali → English)"), type="password", key="gemini_translate_key",
+                          placeholder=T("or set GEMINI_TRANSLATE_API_KEY"),
+                          help=T("Kept only in this browser session. Leave empty if GEMINI_TRANSLATE_API_KEY is set."))
+            st.selectbox(T("Gemini model for translation"), list(GEMINI_OCR_MODELS), key="translate_model",
+                         help=T("Translates the OCR text of each region into English; the translation is written below the text and is included in the exports."))
+            st.caption(T("Gemini sends the OCR text to Google for translation."))
         st.divider()
         st.caption(T("Device: **{device}**", device=device_name().upper()))
         st.button(T("🔄 Reset to defaults"), width="stretch", on_click=reset_defaults)
@@ -869,7 +888,20 @@ Return only the OCR transcription as plain text. Do not add a title, language na
 GEMINI_OCR_MODELS = {
     "Gemini 3.1 Flash-Lite (faster)": "gemini-3.1-flash-lite",
     "Gemini 3.8 Flash": "gemini-3.8-flash",
-}
+    "Gemini Flash (latest)": "gemini-flash-latest",
+}  # also used to choose the translation model
+
+GEMINI_TRANSLATE_PROMPT = """You are an expert translator from Bengali to English. The text below was read by OCR from a scanned historical Bengali newspaper (1940s).
+
+Translate it into clear, natural, grammatically correct English sentences that keep the exact meaning.
+- Be faithful: do not add, leave out, explain or comment. Keep numbers, dates, amounts, and the names of people and places (use the usual English spelling of names).
+- The OCR text can contain small errors, broken words or stray marks. Use the context to understand the intended word, but never invent content that is not in the text. Leave out a part that is unreadable.
+- Parts that are already in English stay as they are.
+- Keep the paragraph and line structure: translate paragraph by paragraph. A headline stays a short headline.
+- Return only the English translation as plain text. No quotation marks, notes, labels, language names or markdown. If the text has nothing to translate, return an empty response.
+
+Text:
+{text}"""
 
 
 @st.cache_resource(show_spinner=False)
@@ -877,7 +909,7 @@ def get_gemini_client(api_key: str):
     from google import genai
     from google.genai import types
     return genai.Client(api_key=api_key, http_options=types.HttpOptions(
-        timeout=60_000, retry_options=types.HttpRetryOptions(attempts=1)))
+        api_version="v1beta", timeout=60_000, retry_options=types.HttpRetryOptions(attempts=1)))
 
 
 def gemini_call(client, image_jpeg: bytes, region_label: str, model_name: str) -> str:
@@ -892,6 +924,55 @@ def gemini_call(client, image_jpeg: bytes, region_label: str, model_name: str) -
             thinking_config=types.ThinkingConfig(thinking_level="low")),  # type: ignore
     )
     return (response.text or "").strip()
+
+
+def gemini_translate(client, text: str, model_name: str) -> str:
+    """One Gemini request that translates the OCR text of one region into English. No Streamlit calls (worker threads)."""
+    from google.genai import types
+    response = client.models.generate_content(
+        model=model_name, contents=GEMINI_TRANSLATE_PROMPT.format(text=text),
+        config=types.GenerateContentConfig(
+            response_mime_type="text/plain", max_output_tokens=8192, temperature=0.2,
+            thinking_config=types.ThinkingConfig(thinking_level="low")),  # type: ignore
+    )
+    return (response.text or "").strip()
+
+
+def _scrub(message: str, secrets: list[str]) -> str:
+    for k in secrets:
+        if k:
+            message = message.replace(k, "[hidden]")
+    return message
+
+
+def translate_text(text: str) -> tuple[str, str | None]:
+    """Main thread: the English translation of `text` and an error message (or None)."""
+    if not text.strip():
+        return "", None
+    key = translate_key()
+    if not key:
+        return "", T("Add the translation API key in the sidebar (or set GEMINI_TRANSLATE_API_KEY) to get an English translation of each region.")
+    model = GEMINI_OCR_MODELS[st.session_state.get("translate_model", next(iter(GEMINI_OCR_MODELS)))]
+    try:
+        client = get_gemini_client(key)
+    except Exception as exc:
+        return "", _scrub(str(exc), [key])
+    english, err = _with_retries(TRANSLATE_GATE, lambda: gemini_translate(client, text, model))
+    return english, (T("Translation failed: {message}", message=_scrub(err, [key])) if err else None)
+
+
+def translate_dets(dets: list[dict]) -> None:
+    """Main thread: translates every region that has text but no translation yet (the regions are sent four at a time)."""
+    key = translate_key()
+    todo = [d for d in dets if (d.get("text") or "").strip() and not d.get("translation")]
+    if not key or not todo:
+        return
+    model = GEMINI_OCR_MODELS[st.session_state.get("translate_model", next(iter(GEMINI_OCR_MODELS)))]
+    client = get_gemini_client(key)
+    with ThreadPoolExecutor(max_workers=OCR_WORKERS) as pool:
+        results = list(pool.map(lambda d: _with_retries(TRANSLATE_GATE, lambda: gemini_translate(client, d["text"], model)), todo))
+    for d, (english, err) in zip(todo, results):
+        d["translation"] = "" if err else english
 
 
 def gemini_ocr(image_jpeg: bytes, region_label: str, model_name: str) -> str:
@@ -955,6 +1036,10 @@ def ensure_region_ocr(result_id: str, model_key: str, index: int, detection: dic
     except Exception as exc:
         record["ocr"].update(status="error", error=str(exc))
     record["ocr"]["elapsed_s"] = round(time.perf_counter() - t0, 3)
+    if record["ocr"]["status"] == "complete":
+        english, err = translate_text(record["ocr"]["text"]) if translate_key() else ("", None)
+        record["ocr"].update(translation=english, translation_error=err)
+        detection["text"], detection["translation"] = record["ocr"]["text"], english
     return record
 
 
@@ -962,35 +1047,80 @@ def ensure_region_ocr(result_id: str, model_key: str, index: int, detection: dic
 OCR_WORKERS = 4  # parallel Gemini requests while a whole page is read
 
 
-def _read_region(client, jpeg: bytes, label: str, model_name: str) -> tuple[str, str | None, float]:
-    """Worker thread: one Gemini request for one region (retried after rate-limit and overload answers).
-    Returns (text, error or None, seconds). It must not touch Streamlit."""
-    t0, last = time.perf_counter(), ""
-    for attempt in range(4):
+class RateGate:
+    """Shared by the OCR worker threads. The Gemini free tier allows about 15 requests a minute per model, so when
+    Gemini answers 429 every worker pauses for the time Gemini asks for, and later requests are spaced out."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.next_at, self.gap = 0.0, 0.0
+
+    def wait(self) -> None:
+        with self.lock:
+            now = time.monotonic()
+            at = max(now, self.next_at)
+            self.next_at = at + self.gap
+        time.sleep(max(0.0, at - now))
+
+    def limited(self, delay: float) -> None:
+        with self.lock:
+            self.gap = max(self.gap, 4.5)  # about 13 requests a minute from now on
+            self.next_at = max(self.next_at, time.monotonic() + delay)
+
+
+OCR_GATE, TRANSLATE_GATE = RateGate(), RateGate()  # one per API key: each key has its own quota
+
+
+def _with_retries(gate: RateGate, call) -> tuple[str, str | None]:
+    """Runs `call()` for a worker thread: (result, None) or ("", error text). A rate-limit answer (429) makes every worker
+    on this gate wait as long as Gemini asks and the request is tried again; overload and timeout answers are retried
+    after a short pause. It must not touch Streamlit."""
+    last = ""
+    for attempt in range(8):
+        gate.wait()
         try:
-            return gemini_call(client, jpeg, label, model_name), None, time.perf_counter() - t0
+            return call(), None
         except Exception as exc:
             last = f"{type(exc).__name__}: {exc}"
-            if not any(k in last for k in ("429", "503", "RESOURCE_EXHAUSTED", "UNAVAILABLE", "overloaded")):
+            if "429" in last or "RESOURCE_EXHAUSTED" in last:
+                if "PerDay" in last:  # the daily quota is used up: waiting a minute will not help
+                    break
+                m = re.search(r"retry in ([\d.]+)s", last)
+                gate.limited(float(m.group(1)) + 1 if m else 20.0)
+            elif any(k in last for k in ("503", "504", "UNAVAILABLE", "DEADLINE", "overloaded", "timed out")):
+                time.sleep(min(2 ** (attempt + 1), 16))
+            else:
                 break
-            time.sleep(2 ** (attempt + 1))
-    return "", last, time.perf_counter() - t0
+    return "", last
+
+
+def _read_region(client, jpeg: bytes, label: str, model_name: str, tr_client=None,
+                 tr_model: str = "") -> tuple[str, str | None, float, str, str | None]:
+    """Worker thread: one Gemini request for the text of one region and, when a translation client is given, one more
+    request that translates the text into English. Returns (text, error, seconds, translation, translation error)."""
+    t0 = time.perf_counter()
+    text, err = _with_retries(OCR_GATE, lambda: gemini_call(client, jpeg, label, model_name))
+    secs = time.perf_counter() - t0
+    english, tr_err = "", None
+    if not err and text.strip() and tr_client is not None:
+        english, tr_err = _with_retries(TRANSLATE_GATE, lambda: gemini_translate(tr_client, text, tr_model))
+    return text, err, secs, english, tr_err
 
 
 class OcrJob:
     """One page being read in the background. Worker threads only append plain data here (they never touch Streamlit);
     the page applies the answers each time its live view refreshes."""
 
-    def __init__(self, secret: str, base_done: int, total: int) -> None:
+    def __init__(self, secrets: list[str], base_done: int, total: int) -> None:
         self.lock = threading.Lock()
-        self.arrived: list[tuple[int, str, str | None, float]] = []
-        self.secret, self.base_done, self.total, self.applied = secret, base_done, total, 0
+        self.arrived: list[tuple[int, str, str | None, float, str, str | None]] = []
+        self.secrets, self.base_done, self.total, self.applied = secrets, base_done, total, 0
 
-    def arrive(self, index: int, outcome: tuple[str, str | None, float]) -> None:
+    def arrive(self, index: int, outcome: tuple[str, str | None, float, str, str | None]) -> None:
         with self.lock:
             self.arrived.append((index, *outcome))
 
-    def take(self) -> list[tuple[int, str, str | None, float]]:
+    def take(self) -> list[tuple[int, str, str | None, float, str, str | None]]:
         with self.lock:
             got, self.arrived = self.arrived, []
         return got
@@ -1023,14 +1153,17 @@ def start_ocr_job(page: Image.Image, dets: list[dict], result_id: str, model_key
     if not jobs:
         return
     client = get_gemini_client(api_key)
-    job = OcrJob(api_key, done_before, len(jobs))
+    tr_key = translate_key()
+    tr_client = get_gemini_client(tr_key) if tr_key else None
+    tr_model = GEMINI_OCR_MODELS[st.session_state.get("translate_model", next(iter(GEMINI_OCR_MODELS)))]
+    job = OcrJob([api_key, tr_key], done_before, len(jobs))
     st.session_state.setdefault("ocr_jobs", {})[f"{result_id}:{model_key}"] = job
     pool = ThreadPoolExecutor(max_workers=OCR_WORKERS)
     for i, d, bounds, crop in jobs:
-        d["text"] = ""
+        d["text"], d["translation"] = "", ""
         rec, jpeg = new_region_record(model_key, i, d, bounds, crop, model_name)
         records[region_record_key(result_id, model_key, i)] = rec
-        pool.submit(_read_region, client, jpeg, d["label"], model_name).add_done_callback(
+        pool.submit(_read_region, client, jpeg, d["label"], model_name, tr_client, tr_model).add_done_callback(
             lambda f, i=i: job.arrive(i, f.result()))
     pool.shutdown(wait=False)  # the queued requests still run; the threads end when they are done
 
@@ -1038,19 +1171,21 @@ def start_ocr_job(page: Image.Image, dets: list[dict], result_id: str, model_key
 def apply_ocr_job(job: OcrJob, dets: list[dict], result_id: str, model_key: str) -> None:
     """Main thread: moves the answers that have arrived into the region records and the detections."""
     records = st.session_state.get("region_records", {})
-    for i, text, err, secs in job.take():
+    for i, text, err, secs, english, tr_err in job.take():
         job.applied += 1
         rkey = region_record_key(result_id, model_key, i)
         rec = records.get(rkey)
         if rec is None or rec["ocr"].get("status") != "pending":  # already handled, e.g. redone in the dialog
             continue
         if err:
-            rec["ocr"].update(status="error", error=T("Gemini OCR failed: {message}", message=err.replace(job.secret, "[hidden]")))
+            rec["ocr"].update(status="error", error=T("Gemini OCR failed: {message}", message=_scrub(err, job.secrets)))
         else:
-            rec["ocr"].update(status="complete", text=text, error=None)
-            dets[i]["text"] = text
+            rec["ocr"].update(status="complete", text=text, error=None, translation=english,
+                              translation_error=T("Translation failed: {message}", message=_scrub(tr_err, job.secrets)) if tr_err else None)
+            dets[i]["text"], dets[i]["translation"] = text, english
         rec["ocr"]["elapsed_s"] = round(secs, 3)
         st.session_state.pop(f"ocr_text_{rkey}", None)  # show the new text when the box is opened
+        st.session_state.pop(f"ocr_en_{rkey}", None)
 
 
 def annotation_block(page: Image.Image, page_b64: str, r: dict, key: str, result_id: str, context_key: str,
@@ -1102,6 +1237,11 @@ def live_annotation_view(page: Image.Image, page_b64: str, r: dict, key: str, re
         if errors:
             st.warning(T("{n} regions could not be read. Click a box and press Redo OCR to try again.", n=len(errors))
                        + "  \n" + T("Reason (first failure): {reason}", reason=str(errors[0])[:300]))
+        tr_errors = [rec["ocr"]["translation_error"] for n, d in enumerate(r["dets"]) if d["label"] not in NON_TEXT
+                     and (rec := records.get(region_record_key(result_id, key, n))) and rec["ocr"].get("translation_error")]
+        if tr_errors:
+            st.warning(T("{n} regions could not be translated. Open the box and press Translate to English to try again.", n=len(tr_errors))
+                       + "  \n" + T("Reason (first failure): {reason}", reason=str(tr_errors[0])[:300]))
     annotation_block(page, page_b64, r, key, result_id, context_key, lang, image_name, in_fragment=True)
     if job is not None and job.finished:
         st.session_state["ocr_jobs"].pop(job_key, None)
@@ -1173,6 +1313,7 @@ def _show_detection_crop(model_title: str, number: int, detection: dict, bounds,
             with st.spinner(T("Waiting for {model}", model=selected_model)):
                 record = ensure_region_ocr(result_id, model_key, detection_index, detection, bounds, crop, selected_model, force=True)
             st.session_state[ocr_text_key] = record["ocr"].get("text", "")  # before the text box is created in this run
+            st.session_state[f"ocr_en_{record_key}"] = record["ocr"].get("translation", "")
         if record is not None:
             if record["ocr"]["status"] == "error":
                 st.error(record["ocr"]["error"])
@@ -1183,6 +1324,24 @@ def _show_detection_crop(model_title: str, number: int, detection: dict, bounds,
             record["ocr"]["text"] = st.session_state[ocr_text_key]
             detection["text"] = record["ocr"]["text"]
             st.caption(T("Model used: {model}. Edit the text above if needed; Redo OCR reads the region again.", model=record['ocr'].get('model')))
+            if record["ocr"]["status"] == "complete":
+                en_key = f"ocr_en_{record_key}"
+                st.markdown("#### " + T("English translation"))
+                if not translate_key():
+                    st.caption(T("Add the translation API key in the sidebar (or set GEMINI_TRANSLATE_API_KEY) to get an English translation of each region."))
+                else:
+                    if st.button(T("🌐 Translate to English"), key=f"translate_{record_key}",
+                                 help=T("Translates the OCR text above, with your edits, into English and replaces the translation below.")):
+                        with st.spinner(T("Translating…")):
+                            english, err = translate_text(st.session_state[ocr_text_key])
+                        st.session_state[en_key] = english
+                        record["ocr"]["translation_error"] = err
+                    if record["ocr"].get("translation_error"):
+                        st.error(record["ocr"]["translation_error"])
+                    st.session_state.setdefault(en_key, record["ocr"].get("translation", ""))
+                    st.text_area(T("English translation (editable)"), key=en_key, height=180)
+                    record["ocr"]["translation"] = st.session_state[en_key]
+                    detection["translation"] = record["ocr"]["translation"]
         elif detection.get("text"):
             st.text_area(T("Text read by the page-level OCR"), detection["text"], height=140, disabled=True,
                          key=f"page_ocr_{record_key}")
@@ -1209,6 +1368,7 @@ def transcribe_regions(results: dict, page: Image.Image, result_id: str, label: 
         if record and record["ocr"].get("status") == "complete":
             done += 1
             d["text"] = record["ocr"]["text"]
+            d["translation"] = record["ocr"].get("translation", "")
         elif record and record["ocr"].get("status") == "error":
             errors += 1
         progress.progress(pos / max(len(eligible), 1), text=T("Processed {pos} of {n} text regions", pos=pos, n=len(eligible)))
@@ -1231,7 +1391,7 @@ def full_export(results: dict, page: Image.Image, result_id: str, image_name: st
             x1, y1, x2, y2 = bounds or (0, 0, 0, 0)
             if record is None:
                 crop_size = {"width_px": max(0, x2 - x1), "height_px": max(0, y2 - y1), "format": "image/jpeg"}
-                ocr = {"attempted": False, "status": "skipped", "model": None, "text": d.get("text"), "error": None}
+                ocr = {"attempted": False, "status": "skipped", "model": None, "text": d.get("text"), "translation": d.get("translation"), "error": None}
                 if d["label"] in NON_TEXT:
                     ocr["reason"] = "OCR skipped for image and advertisement regions"
                 elif bounds is None:
@@ -1374,7 +1534,8 @@ def coord_rows(dets: list[dict], lang: str) -> list[dict]:
         x1, y1, x2, y2 = [round(v) for v in d["box"]]
         rows.append({"#": i, T("Region"): tr(lang, d["label"]), T("Confidence"): round(d["conf"], 3),
                      "x1": x1, "y1": y1, "x2": x2, "y2": y2, T("Width"): x2 - x1, T("Height"): y2 - y1,
-                     **({T("Text"): d.get("text", "")} if "text" in d else {})})
+                     **({T("Text"): d.get("text", "")} if "text" in d else {}),
+                     **({T("English translation"): d["translation"]} if d.get("translation") else {})})
     return rows
 
 
@@ -1387,7 +1548,8 @@ def detections_json(dets: list[dict], size: tuple[int, int], lang: str, source: 
         out.append(dict(id=i, label=d["label"], name_local=tr(lang, d["label"]), class_id=d["cls"], confidence=round(d["conf"], 4),
                         bbox_xyxy=[x1, y1, x2, y2], bbox_xywh=[x1, y1, round(x2 - x1, 1), round(y2 - y1, 1)],
                         bbox_normalized=[round(x1 / w, 5), round(y1 / h, 5), round(x2 / w, 5), round(y2 / h, 5)],
-                        **({"text": d["text"]} if "text" in d else {})))
+                        **({"text": d["text"]} if "text" in d else {}),
+                        **({"translation_en": d["translation"]} if d.get("translation") else {})))
     return dict(image=source, width=w, height=h, coordinate_system="pixels, origin top-left, x to the right, y downwards",
                 count=len(out), detections=out)
 
@@ -1493,6 +1655,8 @@ def summary(image_name: str, lang: str) -> None:
                 if not gemini_key():
                     st.info(T("Add a Gemini API key in the sidebar to read the text of the fused regions."))
                 else:
+                    if not translate_key():
+                        st.info(T("Add the translation API key in the sidebar (or set GEMINI_TRANSLATE_API_KEY) to get an English translation of each region."))
                     try:
                         start_ocr_job(page, r["dets"], result_id, key)
                         r["auto_ocr"] = True
@@ -1544,11 +1708,6 @@ def summary(image_name: str, lang: str) -> None:
                                f"{image_name}_{key}.html", "text/html", key=f"dh_{key}")
             payload = json.dumps(detections_json(export_dets(r["dets"]), page.size, lang, image_name), indent=2, ensure_ascii=False)
             c2.download_button(T("⬇ Detections (JSON)"), payload, f"{image_name}_{key}.json", "application/json", key=f"dj_{key}")
-            if key == "fusion" and has_text:
-                masthead = next((d["text"] for d in r["dets"] if d.get("source_label", d["label"]) == "flag" and d.get("text")), "")
-                st.download_button(T("📰 Download newspaper as HTML (news site, from Ensemble Fusion)"),
-                                   news_html([{**d, "label": d.get("source_label", d["label"])} for d in r["dets"]], image_name, masthead), f"{image_name}_news.html", "text/html",
-                                   key="dn_fusion", type="primary")
             with st.expander(T("📐 Coordinates of all {n} boxes (pixels, top-left origin)", n=len(r['dets']))):
                 st.dataframe(coord_rows(r["dets"], lang), width="stretch", hide_index=True)
 

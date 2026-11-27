@@ -147,3 +147,31 @@ def test_without_media_drops_figures_ads_and_simplified_images():
             {**det((0, 0, 10, 10), "paragraph"), "label": "advertisement", "source_label": "advertisement"}]
     kept = exports.without_media(dets)
     assert len(kept) == 1 and kept[0]["label"] == "paragraph"
+
+
+# --- English translation under the OCR text ---------------------------------------
+def with_translation():
+    d1 = det((50, 300, 400, 900), text="বাংলা লেখা")
+    d1["translation"] = "Bengali text <one>"
+    d2 = det((50, 50, 950, 200), "headline", text="শিরোনাম")
+    d2["translation"] = "Headline"
+    return {"name": "p1.png", "width": 1000, "height": 1000, "image": None, "dets": [d1, d2, det((600, 300, 950, 600), "figure")]}
+
+
+def test_translation_is_written_below_the_text_in_txt():
+    page = with_translation()
+    assert layout_order.assemble_text(page["dets"], (1000, 1000)) == "শিরোনাম\nHeadline\n\nবাংলা লেখা\nBengali text <one>"
+    assert layout_order.assemble_text(page["dets"], (1000, 1000), translation=False) == "শিরোনাম\n\nবাংলা লেখা"
+
+
+def test_translation_is_exported_to_coco_page_xml_and_html():
+    page = with_translation()
+    anns = json.loads(exports.coco_json([page], NAMES))["annotations"]
+    assert sorted(a["text_en"] for a in anns if "text_en" in a) == ["Bengali text <one>", "Headline"]
+    root = ET.fromstring(exports.page_xml(page))
+    ns = {"p": exports.PAGE_NS}
+    equivs = root.findall(".//p:TextEquiv", ns)
+    assert [e.get("index") for e in equivs] == ["0", "1", "0", "1"]
+    assert "Bengali text <one>" in [e.find("p:Unicode", ns).text for e in equivs]
+    html = exports.html_document([page])
+    assert 'class="en" lang="en">Bengali text &lt;one&gt;<' in html and ">Headline<" in html
