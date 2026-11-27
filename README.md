@@ -37,7 +37,7 @@ For Bengali and English pages it is hard, because the Bengali script is complex,
 The public IndicDLP dataset (119,806 pages, 42 region classes) and its fine-tuned detectors solve the modelling part, but they are released only as research checkpoints with no user interface.
 This project builds a web application, the Live Layout Studio, that puts two of these detectors (YOLOv10x and DocLayout-YOLO) behind one interface.
 It adds multi-scale inference and Weighted Boxes Fusion to merge several passes or models into one prediction.
-It animates detection region by region, shows the 42 class names in English, Bengali and ten other Indic languages, and reads the text of each region with OCR (Gemini or EasyOCR).
+It animates detection region by region, is available in English and Bengali (interface and 42 class names), and reads the text of each region with OCR (Gemini or EasyOCR).
 Multi-page PDFs can be processed as a batch, and results export as PNG, JSON, COCO JSON, PAGE-XML, HTML and text in reading order.
 The published checkpoints (57.7 and 54.5 mAP[50:95]) are used as released, and one of them is also fine-tuned on annotated Bengali newspaper pages.
 On 50 held-out, human-corrected Bengali newspaper pages the ensemble reached 97.9 mAP[50:95] against 89.8 and 90.3 for the two boosted single models, at about 0.39 s per page on a GPU. These figures are circular (the annotators corrected the ensemble's own output, Section 5.4), so they show agreement with that output rather than independent accuracy.
@@ -96,7 +96,7 @@ To make state-of-the-art Indic layout detectors easy to run, compare and inspect
 
 1. To build a single web interface over two IndicDLP layout detectors (YOLOv10x and DocLayout-YOLO) for English and Bengali document pages.
 2. To improve recall on small and faint regions by multi-scale inference and ensemble fusion (Weighted Boxes Fusion), and to measure its effect against the single models.
-3. To make detection observable: a live region-by-region reveal, clickable boxes with coordinates and cutouts, and class names in English, Bengali and ten other Indic languages without re-running the models.
+3. To make detection observable: a live region-by-region reveal, clickable boxes with coordinates and cutouts, and an interface and class names in English and Bengali that can be switched without re-running the models.
 4. To extract the text of each region with OCR (Gemini or EasyOCR) and to support multi-page PDF input, batch processing and export as PNG, JSON, COCO JSON, PAGE-XML, HTML and reading-order text.
 5. To benchmark the models and measure per-class AP of the single models, the multi-scale boost and ensemble fusion (with tuned fusion weights) on human-annotated pages, and to report the limitations honestly.
 
@@ -129,8 +129,8 @@ flowchart LR
 4. **Multi-scale boost.** Each YOLO-type model runs at size S (1024 px, the training size) and at S2 (1280 px). The two prediction sets are fused.
 5. **Weighted Boxes Fusion.** Boxes are normalised to [0,1]. Same-class boxes are clustered when IoU exceeds 0.60 (scales) or 0.55 (models). A fused box is the confidence-weighted average of its cluster, and its score is the cluster maximum.
 6. **Reading order.** A recursive XY-cut (`layout_order.py`) splits the page at the widest empty band, relative to the page size: stacked sections are read top to bottom and columns left to right, so a full-width headline precedes the columns beneath it. It replaces the earlier 40 px band sort. It is a geometric rule, **not** a learned model.
-7. **Localisation.** Class names are stored once in English and translated at display time by `i18n.py`, so changing language never triggers inference.
-8. **Interface.** Streamlit app with a file manager, sample gallery, model toggles, confidence / NMS-IoU / inference-size controls, a simplified six-family class view, and a custom component for clickable boxes.
+7. **Localisation.** Class names and all interface text are stored once in English and translated at display time by `i18n.py` (English or Bengali, chosen with the Language selector at the top of the sidebar), so changing language never triggers inference. Exported files, the annotated PNG and the OCR prompts stay in English.
+8. **Interface.** Streamlit app with a file manager, a sample gallery (the 100 Batch 06 newspaper pages from `batch_06/`), a language selector (English / Bengali), model toggles, confidence / NMS-IoU / inference-size controls, a simplified six-family class view, and a custom component for clickable boxes.
 9. **OCR and enhancement.** A Gemini request per region (with model fallback) or local EasyOCR reads text-bearing regions; figures, tables, formulas, advertisements and placeholder text are skipped. ESPCN x2 can upscale a small crop first.
 10. **Export.** Annotated PNG, detections JSON, a full cutout JSON with cropped images, and, new, COCO JSON (`bbox` in pixels, 42 categories, reading order and OCR text), PAGE-XML (2019 schema: regions, reading order, text) and a self-contained HTML page in reading order. The TXT now assembles the OCR text in reading order (`assemble_text`). A sidebar toggle, **Leave out images and ads in exports** (on by default), removes figure and advertisement regions from every export file (JSON, COCO, PAGE-XML, HTML, TXT, cutouts JSON, batch ZIP); the annotated PNG and the on-screen boxes still show them.
 11. **PDF input and batch processing.** Uploaded PDFs are rendered page by page (PyMuPDF, 150 dpi, at most 200 pages) into the file manager. **Batch** runs detection (and optionally OCR) on every page without the animation and returns one ZIP: per-page JSON, PAGE-XML and text, plus one COCO file and one HTML file for the whole batch.
@@ -143,7 +143,7 @@ flowchart LR
 |---|---|
 | Training dataset | **IndicDLP** (public, AI4Bharat, on Hugging Face): 119,806 pages, 12 document domains, 1,856,241 regions, 42 classes |
 | Collection / cleaning / preprocessing | Done by the dataset authors (human annotation, YOLO-format conversion). Not repeated here. |
-| Data used in this project | (a) **Sample pages** (`data/examples/`, `docs/images/`): scanned English and Bengali newspapers, a brochure, a form, a question paper and a research paper, with no ground-truth boxes, used for the speed benchmark. (b) **Batch 06**: 100 scanned Bengali newspaper pages (March 1946) annotated in Label Studio with 10 classes (Headline, Subtitle, BodyText, Caption, Image, Header, Footer, Folio, PageNumber, Flag), 10,192 regions in total, each with OCR text. Used as ground truth in Section 5.4. |
+| Data used in this project | (a) **Sample pages** (formerly in `docs/images/`, no longer in the repository): scanned English and Bengali newspapers, a brochure, a form, a question paper and a research paper, with no ground-truth boxes, used for the speed benchmark. (b) **Batch 06**: 100 scanned Bengali newspaper pages (March 1946) annotated in Label Studio with 10 classes (Headline, Subtitle, BodyText, Caption, Image, Header, Footer, Folio, PageNumber, Flag), 10,192 regions in total, each with OCR text. Used as ground truth in Section 5.4. |
 | Inference preprocessing | Convert to RGB, resize to the inference size (default 1024 px on the long side), run the detector, drop boxes below the confidence threshold (default 0.25) |
 
 ### 4.4 Model selection, training and validation
@@ -163,9 +163,10 @@ flowchart LR
 | File | Purpose |
 |---|---|
 | `app.py` | Streamlit app: inference, fusion, reveal animation, results, exports |
-| `i18n.py` | Names of the 42 classes in English and 11 Indic languages |
+| `i18n.py` | Names of the 42 classes and all interface text in English and Bengali |
 | `annotation_view/` | Custom component for clickable boxes and in-browser cutouts |
-| `benchmark.py` / `benchmark_results.json` | Speed and agreement benchmark and its output |
+| `batch_06/` | The 100 Batch 06 page images that the Sample gallery lists (not in git; add the folder locally) |
+| `benchmark.py` / `benchmark_results.json` | Speed and agreement benchmark and its output (`benchmark.py` reads `docs/images/`, which has to be restored to re-run it) |
 | `evaluate_fusion.py`, `detmetrics.py` | Per-class AP evaluation and fusion-weight tuning (IndicDLP YOLO format or a Label Studio export) |
 | `batch06_evaluation_*.json/.md`, `batch06_fusion_weights.json` | Results of that evaluation on Batch 06 |
 | `finetune_batch06.py`, `batch06_finetune_results.json` | Fine-tuning of YOLOv10x on the annotated pages and its held-out scores |
@@ -176,7 +177,6 @@ flowchart LR
 | `tests/` | Unit tests (`python -m pytest tests -q`) |
 | `doclayout-yolo/` | Train / evaluate / predict scripts for DocLayout-YOLO |
 | `ESPCN_x2.pb` | Super-resolution weights |
-| `yolo26/` | `prepare_data.py`, `train.py`, `evaluate.py`: fine-tune and score YOLO26 on IndicDLP; the app loads `weights/yolo26_indicdlp.pt` if present |
 | `dataset_builder.py`, `ad_dataset.py`, `models_benchmark.py`, `train_benchmark.py` | Ad vs Non-Ad classifier benchmark (LeNet-5 and ResNet-18, aspect-ratio letterboxing to 224x224, class-weighted loss); notebook `ad_classifier_benchmark.ipynb` |
 | `annotator_standalone.py`, `run_hybrid_gpu_gemini_annotator.py` | Auto-annotators: YOLO layout detection plus Gemini / EasyOCR text, written as a Label Studio pre-annotation JSON (set `INPUT_SCANS_DIR`, `OUTPUT_JSON_PATH`, `GEMINI_API_KEYS`) |
 | `model_inference.py` | Headless model loading and inference without Streamlit |
@@ -197,7 +197,7 @@ python -m streamlit run app.py                                  # open http://lo
 
 On first launch the sidebar offers a **Download weights** button for each missing checkpoint (about 225 MB in total; Zenodo record 15881917). Gemini OCR needs an API key in the sidebar or in `GEMINI_API_KEY`; EasyOCR works offline. An NVIDIA GPU is recommended but not required.
 
-**Using the app:** add pages in the File manager (or choose the Sample gallery), press **Scan & detect**, watch the reveal, then use the result tabs. Click a box for its coordinates, cutout, ESPCN upscale and OCR. Change **Region names** to switch language without re-running the models.
+**Using the app:** add pages in the File manager (or choose the Sample gallery, which lists the Batch 06 pages and needs the local `batch_06/` folder), press **Scan & detect**, watch the reveal, then use the result tabs. Click a box for its coordinates, cutout, ESPCN upscale and OCR. Change **Language / ভাষা** at the top of the sidebar to switch the whole interface (English or Bengali) without re-running the models.
 
 | Setting | Default | Range |
 |---|---|---|
@@ -213,7 +213,7 @@ On first launch the sidebar offers a **Download weights** button for each missin
 
 All numbers below come from `benchmark_results.json` (GPU run: confidence 0.25, NMS IoU 0.70, 1024 px, 3 timed repetitions after a warm-up, 11 sample images).
 
-> **Caveat for 5.2.** The 11 images are the pictures stored in `docs/images/`. Nine are document pages or figures; two (`IndicDLP_instances_dis.png`, `layout_dist.png`) are tables of dataset statistics that yield one detection each. They have **no ground-truth boxes**, so these figures describe behaviour and cost, **not accuracy**.
+> **Caveat for 5.2.** The 11 images were the pictures stored in `docs/images/`; they are no longer in the repository, so the figures below are the recorded measurements and `benchmark.py` cannot be re-run without putting the images back. Nine are document pages or figures; two (`IndicDLP_instances_dis.png`, `layout_dist.png`) are tables of dataset statistics that yield one detection each. They have **no ground-truth boxes**, so these figures describe behaviour and cost, **not accuracy**.
 
 ### 5.1 Comparative analysis of the models (prediction accuracy)
 
@@ -275,23 +275,13 @@ Total regions over the 11 images: YOLOv10x 284, DocLayout-YOLO 289, Ensemble 478
 
 **OCR speed (EasyOCR, local GPU, 3 pages, 147 regions):** 25.4 s per page, 518 ms per region. Gemini OCR is cloud-based and was not timed.
 
-**Demonstration (Ensemble output, default settings)**
-
-| Demo 1: English newspaper, *Amrita Bazar Patrika*, 15 Aug 1947 | Demo 2: Bengali newspaper page |
-|:---:|:---:|
-| <img src="docs/images/demo1_input.jpg" width="330"> <img src="docs/images/demo1_output.jpg" width="330"> | <img src="docs/images/demo2_input.jpg" width="330"> <img src="docs/images/demo2_output.jpg" width="330"> |
-
-- *Demo 1:* the banner is a `flag` (0.89); headlines 0.74 and 0.83; both photographs `figure` (0.95) with captions (0.81, 0.79); the insurance box an `advertisement` (0.95); small page furniture (`folio`, `dateline`) has the lowest confidence (about 0.28-0.62).
-- *Demo 2:* seven large advertisements are found (0.81-0.94); the small top-left advertisement is wrongly labelled `figure` (0.26); the three text columns are `paragraph` boxes.
-- Both are old, low-contrast scans. Large distinctive regions score high; small page furniture and headline levels score low and are the least reliable.
-
 ### 5.3 Inferential analysis
 
 No hypothesis test or confidence interval was computed. The speed sample (11 images) has no ground truth, and the 50 held-out pages of Section 5.4 come from one newspaper and period. Differences of about one point in mAP between pipelines are therefore descriptive and should not be read as statistically significant.
 
 ### 5.4 Evaluation against human annotation (Batch 06)
 
-**Data.** 100 scanned Bengali newspaper pages (March 1946) from the Label Studio export of 2026-11-21: 9,621 regions in 5 classes (BodyText 5,232, Image 1,547, Subtitle 1,530, Headline 1,251, Caption 61). The other five classes of the earlier export (Header, Footer, Folio, PageNumber, Flag) are no longer annotated, so they have no ground truth and are shown as "-". The 50 even-numbered pages tune the fusion weights; the 50 odd-numbered pages (5,106 regions, counts per class below) are held out and scored. The detectors' 42 classes are folded onto the annotation classes (`LS_CLASS_MAP` in `evaluate_fusion.py`; advertisements are counted as `Image`, all other text classes as `BodyText`, which is an assumption). Metric: COCO-style AP over IoU 0.50-0.95 (101-point), confidence cut-off 0.001, inference size 1024 (second scale 1280). The models are run on the **original** page images (`batch_06/`); the export's own `images/` folder has the boxes drawn on it and must not be used for scoring or training. Reproduce with:
+**Data.** 100 scanned Bengali newspaper pages (March 1946) from the Label Studio export of 2026-11-21 (kept locally as `export_2026-11-21/`, not in the repository): 9,621 regions in 5 classes (BodyText 5,232, Image 1,547, Subtitle 1,530, Headline 1,251, Caption 61). The other five classes of the earlier export (Header, Footer, Folio, PageNumber, Flag) are no longer annotated, so they have no ground truth and are shown as "-". The 50 even-numbered pages tune the fusion weights; the 50 odd-numbered pages (5,106 regions, counts per class below) are held out and scored. The detectors' 42 classes are folded onto the annotation classes (`LS_CLASS_MAP` in `evaluate_fusion.py`; advertisements are counted as `Image`, all other text classes as `BodyText`, which is an assumption). Metric: COCO-style AP over IoU 0.50-0.95 (101-point), confidence cut-off 0.001, inference size 1024 (second scale 1280). The models are run on the **original** page images (`batch_06/`); the export's own `images/` folder has the boxes drawn on it and must not be used for scoring or training. Reproduce with:
 
 ```
 python evaluate_fusion.py --ls-images batch_06 --ls-json export_2026-11-21/json --out-prefix batch06
@@ -381,7 +371,7 @@ EasyOCR is acceptable on short, large display text (headlines and subtitles, abo
 
 ## 6. Conclusion
 
-- **A usable system was delivered.** Two research checkpoints now run behind one interface that supports live reveal, clickable cutouts, 11 Indic languages for labels, OCR, multi-page PDF input, batch processing, and export as PNG, JSON, COCO JSON, PAGE-XML, HTML and reading-order text, and that falls back gracefully when a model or weights file is missing.
+- **A usable system was delivered.** Two research checkpoints now run behind one interface that supports live reveal, clickable cutouts, an English/Bengali interface and labels, OCR, multi-page PDF input, batch processing, and export as PNG, JSON, COCO JSON, PAGE-XML, HTML and reading-order text, and that falls back gracefully when a model or weights file is missing.
 - **Ensemble fusion increases coverage.** On the 11 sample pages it returned 478 regions against 284 and 289 for the single models, and kept 95.4 % and 99.7 % of their boxes. The two detectors agree on only about two thirds of their boxes, so they are complementary.
 - **The cost is acceptable.** About 0.39 s per page for the full boosted ensemble on a GPU, against 0.08-0.09 s for one model at one size.
 - **Fusion agrees best with the human-corrected annotations, but that is circular.** On 50 held-out pages, mAP[50:95] was 84.1 / 85.0 (single scale), 89.8 / 90.3 (multi-scale boost) and 97.9 (ensemble). Because the annotations started from this ensemble's output, this is not independent evidence of accuracy. On the IndicDLP test split the published figures are 57.7 (YOLOv10x) and 54.5 (DocLayout-YOLO); `evaluate_fusion.py` can repeat that evaluation, but the dataset was not available here.
@@ -424,7 +414,7 @@ https://github.com/RajdipDhar2007/IndicDLP-Live-Layout-Studio
 ### Appendix 4: Other documents
 
 - Benchmark data: `benchmark_results.json`, produced by `benchmark.py` (both in the repository).
-- Evaluation on human-annotated pages: `batch06_evaluation_results.json`, `batch06_evaluation_per_class.md`, `batch06_fusion_weights.json`, produced by `evaluate_fusion.py`. The annotated pages themselves are in the local folder `export_2026-11-21` (100 pages, 9,621 regions, 8,071 with OCR text; not in the repository).
+- Evaluation on human-annotated pages: `batch06_evaluation_results.json`, `batch06_evaluation_per_class.md`, `batch06_fusion_weights.json`, produced by `evaluate_fusion.py`. The annotated pages themselves are in the local folder `export_2026-11-21` (100 pages, 9,621 regions, 8,071 with OCR text; not in the repository). A later hand-in copy of the same 100 pages with four classes (Headline, Subtitle, BodyText, Caption; no Image boxes) is in `Rajdip_Dhar/` (also not in the repository).
 - IndicDLP annotation guideline: `guidelines/ANNOTATION_GUIDELINE_BY_CATEGORY.pdf`.
 - Copy of this report: this `README.md`. A PDF copy and the presentation can be added to the repository or Google Drive and linked here.
 

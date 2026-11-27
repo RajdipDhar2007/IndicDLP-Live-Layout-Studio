@@ -44,8 +44,6 @@ MODELS = {
                           "md2_PT_indicdlp_FT.pt", "yolo", "57.7", "⚡", 64280114),
     "doclayout": ModelSpec("doclayout", "DocLayout-YOLO", "Document-specialised YOLOv10 variant with global-to-local perception.",
                            "doclayout_yolo_indicdlp.pt", "doclayout", "54.5", "🧭", 161475350),
-    "yolo26": ModelSpec("yolo26", "YOLO26", "Latest Ultralytics YOLO (extra-large size), NMS-free, fine-tuned on IndicDLP's 42 layout classes.",
-                        "yolo26_indicdlp.pt", "yolo", "43.4", "🚀", 1),
 }
 
 CLASS_NAMES = [

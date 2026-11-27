@@ -2,7 +2,7 @@
 # Python 3.10 or newer. CPU-only machines work too, just slower.
 
 streamlit>=1.57          # tested with 1.64.0
-ultralytics>=8.4         # YOLOv10x and YOLO26 weights (YOLO26 needs 8.4.0+)
+ultralytics>=8.4         # YOLOv10x weights
 doclayout-yolo>=0.0.4    # DocLayout-YOLO weights
 ensemble-boxes>=1.0.9    # box fusion for the multi-scale boost and Ensemble Fusion
 huggingface_hub          # imported by doclayout-yolo
@@ -12,7 +12,6 @@ opencv-contrib-python   # cv2.dnn_superres for the ESPCN x2 crop upscaler
 easyocr                  # offline text extraction (OCR) for Bengali and English
 scikit-learn          # ad classifier benchmark metrics (train_benchmark.py)
 matplotlib
-pyarrow                  # yolo26/prepare_data.py
 pyyaml
 google-genai             # per-region Gemini OCR
 python-dotenv            # reads GEMINI_API_KEY from a local .env file
