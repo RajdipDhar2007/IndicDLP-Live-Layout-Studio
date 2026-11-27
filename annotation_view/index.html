@@ -17,9 +17,10 @@
       background: var(--region-color); color: #0a0b1a; font: 700 13px/1.35 'Segoe UI', sans-serif;
       white-space: nowrap; }
     .region.top-edge .region-label { top: 0; bottom: auto; border-radius: 0 0 3px 0; }
-    .region-tick { position: absolute; top: 2px; right: 2px; z-index: 1; display: grid; place-items: center;
-      width: 17px; height: 17px; border-radius: 50%; background: #16a34a; color: #fff;
-      font: 700 12px/1 'Segoe UI', sans-serif; box-shadow: 0 1px 5px #0009; }
+    .region-tick { position: absolute; top: 2px; right: 2px; z-index: 1; font: 16px/1 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif;
+      filter: drop-shadow(0 1px 3px #000a); }
+    .region-tick.new { animation: tick-pop .35s ease-out; }
+    @keyframes tick-pop { from { transform: scale(2.2); opacity: 0; } to { transform: scale(1); opacity: 1; } }
     .page.dense .region.paragraph .region-label { display: none; }
     .page.dense .region.paragraph:hover .region-label,
     .page.dense .region.paragraph:focus-visible .region-label { display: block; }

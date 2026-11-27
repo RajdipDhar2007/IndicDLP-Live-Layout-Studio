@@ -266,6 +266,7 @@ UI_BN: dict[str, str] = {
         "Gemini পৃষ্ঠাটি পড়তে পারেনি ({last})। দৈনিক বিনামূল্যের সীমা শেষ হয়ে থাকতে পারে; পরে আবার চেষ্টা করুন।",
     "Gemini OCR failed: {message}": "Gemini OCR ব্যর্থ হয়েছে: {message}",
     "Reading text: {done} of {total} regions": "লেখা পড়া হচ্ছে: {total}টির মধ্যে {done}টি অঞ্চল",
+    "Reason (first failure): {reason}": "কারণ (প্রথম ব্যর্থতা): {reason}",
     "{n} regions could not be read. Click a box and press Redo OCR to try again.": "{n}টি অঞ্চল পড়া যায়নি। বাক্সে ক্লিক করে “আবার OCR করুন” চাপুন।",
     "🔁 Redo OCR": "🔁 আবার OCR করুন",
     "Reads this region again with the selected model and replaces the text below, including any edits you made.":
@@ -275,8 +276,8 @@ UI_BN: dict[str, str] = {
     "Model used: {model}. Edit the text above if needed; Redo OCR reads the region again.":
         "ব্যবহৃত মডেল: {model}। দরকার হলে ওপরের লেখা সম্পাদনা করুন; “আবার OCR করুন” অঞ্চলটি আবার পড়ে।",
     "Reads every text region again and replaces all texts, including your edits.": "প্রতিটি লেখার অঞ্চল আবার পড়ে এবং আপনার সম্পাদনাসহ সব লেখা বদলে দেয়।",
-    "💡 Click any box to open its cutout: coordinates, PNG download, ESPCN x2 upscale, and its text, which you can edit or read again with Redo OCR. A green ✓ marks a box whose text has been read.":
-        "💡 যেকোনো বাক্সে ক্লিক করে তার কাটআউট খুলুন: স্থানাঙ্ক, PNG ডাউনলোড, ESPCN x2 বড় করা, এবং তার লেখা, যা আপনি সম্পাদনা করতে বা “আবার OCR করুন” দিয়ে আবার পড়াতে পারেন। সবুজ ✓ চিহ্ন মানে বাক্সের লেখা পড়া হয়ে গেছে।",
+    "💡 Click any box to open its cutout: coordinates, PNG download, ESPCN x2 upscale, and its text, which you can edit or read again with Redo OCR. A green ✅ marks a box whose text has been read; click it at any time, even while the other boxes are still being read.":
+        "💡 যেকোনো বাক্সে ক্লিক করে তার কাটআউট খুলুন: স্থানাঙ্ক, PNG ডাউনলোড, ESPCN x2 বড় করা, এবং তার লেখা, যা আপনি সম্পাদনা করতে বা “আবার OCR করুন” দিয়ে আবার পড়াতে পারেন। সবুজ ✅ চিহ্ন মানে বাক্সের লেখা পড়া হয়ে গেছে; বাকি বাক্সগুলো পড়া চলার সময়ও আপনি যেকোনো বাক্সে ক্লিক করতে পারেন।",
     # legend groups
     "Headlines": "প্রধান শিরোনাম", "Titles": "শিরোনাম ও অধ্যায়", "Body text": "মূল লেখা", "Lists": "তালিকা",
     "Figures & tables": "চিত্র ও সারণি", "Page furniture": "পৃষ্ঠার কাঠামো", "Exam parts": "পরীক্ষার অংশ", "Other": "অন্যান্য",
