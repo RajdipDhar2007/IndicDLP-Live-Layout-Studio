@@ -279,6 +279,7 @@ UI_BN: dict[str, str] = {
     "🌐 Translate to English": "🌐 ইংরেজিতে অনুবাদ করুন",
     "Translates the OCR text above, with your edits, into English and replaces the translation below.": "উপরের OCR লেখা (আপনার সম্পাদনাসহ) ইংরেজিতে অনুবাদ করে নিচের অনুবাদ বদলে দেয়।",
     "Translating…": "অনুবাদ হচ্ছে…",
+    "Gemini is busy or limiting requests ({reason}). The app waits and tries again by itself.": "Gemini এখন ব্যস্ত বা অনুরোধ সীমিত করছে ({reason})। অ্যাপ অপেক্ষা করে নিজেই আবার চেষ্টা করবে।",
     "Reason (first failure): {reason}": "কারণ (প্রথম ব্যর্থতা): {reason}",
     "{n} regions could not be read. Click a box and press Redo OCR to try again.": "{n}টি অঞ্চল পড়া যায়নি। বাক্সে ক্লিক করে “আবার OCR করুন” চাপুন।",
     "🔁 Redo OCR": "🔁 আবার OCR করুন",

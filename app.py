@@ -1071,10 +1071,10 @@ class RateGate:
 OCR_GATE, TRANSLATE_GATE = RateGate(), RateGate()  # one per API key: each key has its own quota
 
 
-def _with_retries(gate: RateGate, call) -> tuple[str, str | None]:
+def _with_retries(gate: RateGate, call, note: dict | None = None) -> tuple[str, str | None]:
     """Runs `call()` for a worker thread: (result, None) or ("", error text). A rate-limit answer (429) makes every worker
     on this gate wait as long as Gemini asks and the request is tried again; overload and timeout answers are retried
-    after a short pause. It must not touch Streamlit."""
+    after a short pause. `note` (shared with the page) gets a short reason whenever Gemini is busy. It must not touch Streamlit."""
     last = ""
     for attempt in range(8):
         gate.wait()
@@ -1082,6 +1082,8 @@ def _with_retries(gate: RateGate, call) -> tuple[str, str | None]:
             return call(), None
         except Exception as exc:
             last = f"{type(exc).__name__}: {exc}"
+            if note is not None and any(k in last for k in ("429", "RESOURCE_EXHAUSTED", "503", "504", "UNAVAILABLE", "DEADLINE", "timed out")):
+                note.update(text="429 rate limit" if ("429" in last or "RESOURCE_EXHAUSTED" in last) else "503/504 overloaded or slow", at=time.monotonic())
             if "429" in last or "RESOURCE_EXHAUSTED" in last:
                 if "PerDay" in last:  # the daily quota is used up: waiting a minute will not help
                     break
@@ -1095,15 +1097,15 @@ def _with_retries(gate: RateGate, call) -> tuple[str, str | None]:
 
 
 def _read_region(client, jpeg: bytes, label: str, model_name: str, tr_client=None,
-                 tr_model: str = "") -> tuple[str, str | None, float, str, str | None]:
+                 tr_model: str = "", note: dict | None = None) -> tuple[str, str | None, float, str, str | None]:
     """Worker thread: one Gemini request for the text of one region and, when a translation client is given, one more
     request that translates the text into English. Returns (text, error, seconds, translation, translation error)."""
     t0 = time.perf_counter()
-    text, err = _with_retries(OCR_GATE, lambda: gemini_call(client, jpeg, label, model_name))
+    text, err = _with_retries(OCR_GATE, lambda: gemini_call(client, jpeg, label, model_name), note)
     secs = time.perf_counter() - t0
     english, tr_err = "", None
     if not err and text.strip() and tr_client is not None:
-        english, tr_err = _with_retries(TRANSLATE_GATE, lambda: gemini_translate(tr_client, text, tr_model))
+        english, tr_err = _with_retries(TRANSLATE_GATE, lambda: gemini_translate(tr_client, text, tr_model), note)
     return text, err, secs, english, tr_err
 
 
@@ -1115,6 +1117,7 @@ class OcrJob:
         self.lock = threading.Lock()
         self.arrived: list[tuple[int, str, str | None, float, str, str | None]] = []
         self.secrets, self.base_done, self.total, self.applied = secrets, base_done, total, 0
+        self.note = {"text": "", "at": 0.0}  # why the workers are waiting, if Gemini is busy
 
     def arrive(self, index: int, outcome: tuple[str, str | None, float, str, str | None]) -> None:
         with self.lock:
@@ -1163,7 +1166,7 @@ def start_ocr_job(page: Image.Image, dets: list[dict], result_id: str, model_key
         d["text"], d["translation"] = "", ""
         rec, jpeg = new_region_record(model_key, i, d, bounds, crop, model_name)
         records[region_record_key(result_id, model_key, i)] = rec
-        pool.submit(_read_region, client, jpeg, d["label"], model_name, tr_client, tr_model).add_done_callback(
+        pool.submit(_read_region, client, jpeg, d["label"], model_name, tr_client, tr_model, job.note).add_done_callback(
             lambda f, i=i: job.arrive(i, f.result()))
     pool.shutdown(wait=False)  # the queued requests still run; the threads end when they are done
 
@@ -1230,6 +1233,8 @@ def live_annotation_view(page: Image.Image, page_b64: str, r: dict, key: str, re
     if job is not None and not job.finished:
         done, total = job.base_done + job.applied, job.base_done + job.total
         st.html(progress_html(done / max(total, 1), T("Reading text: {done} of {total} regions", done=done, total=total)))
+        if time.monotonic() - job.note["at"] < 90:
+            st.caption(T("Gemini is busy or limiting requests ({reason}). The app waits and tries again by itself.", reason=job.note["text"]))
     else:
         records = st.session_state.get("region_records", {})
         errors = [rec["ocr"]["error"] for n, d in enumerate(r["dets"]) if d["label"] not in NON_TEXT
