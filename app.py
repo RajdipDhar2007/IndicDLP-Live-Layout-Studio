@@ -1427,7 +1427,13 @@ def main() -> None:
 
     with workspace_col:
         examples = list_examples()
-        src = st.radio("Source", ["File manager", "Sample gallery"], horizontal=True, label_visibility="collapsed", format_func=T)
+        # Translated options and no key: a language switch must not reset the choice, so the English name is kept in
+        # session_state and passed back as the default index (a keyed widget with format_func would snap back to option 1).
+        sources = ["File manager", "Sample gallery"]
+        picked_source = st.radio("Source", [T(x) for x in sources], index=sources.index(st.session_state.get("source", sources[0])),
+                                 horizontal=True, label_visibility="collapsed")
+        src = sources[[T(x) for x in sources].index(picked_source)]
+        st.session_state["source"] = src
         activate_file_workspace(st.session_state.get("selected_manager_file_id") if src == "File manager" else None)
         image: Image.Image | None = None
         name = "document"
@@ -1441,7 +1447,7 @@ def main() -> None:
             else:
                 st.info(T("⬆️ Upload one or more pages in the File manager on the right."))
         elif examples:
-            pick = st.selectbox(T("Sample page"), list(examples), index=0)
+            pick = st.selectbox(T("Sample page"), list(examples), key="sample_pick")
             image = Image.open(examples[pick]).convert("RGB")
             name = pick
         else:
