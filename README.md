@@ -42,6 +42,7 @@ Multi-page PDFs can be processed as a batch, and results export as PNG, JSON, CO
 The published checkpoints (57.7 and 54.5 mAP[50:95]) are used as released, and one of them is also fine-tuned on annotated Bengali newspaper pages.
 On 50 held-out, human-corrected Bengali newspaper pages the ensemble reached 97.9 mAP[50:95] against 89.8 and 90.3 for the two boosted single models, at about 0.37 s per page on a GPU. These figures are circular (the annotators corrected the ensemble's own output, Section 5.4), so they show agreement with that output rather than independent accuracy.
 The system makes layout detectors usable and inspectable, and its limits are listed for future work.
+The work is the author's part of an eight-intern group project on 800 pages of the Bengali newspaper *Jugantar* (1946, National Digital Library of India): the author annotated Batch 06 of that collection and built the Live Layout Studio (Section 2.7).
 
 ---
 
@@ -73,6 +74,9 @@ India has a very large body of Bengali and other Indic print, much of it archiva
 - **YOLOv10** (Wang et al., NeurIPS 2024): a real-time detector trained to give one prediction per object, so it needs no non-maximum suppression (NMS). The YOLOv10x checkpoint was pretrained on UED-mini (about 75,000 pages from DocLayNet and M6Doc) and then fine-tuned on IndicDLP.
 - **DocLayout-YOLO** (Zhao et al., 2024): a YOLOv10-derived detector for documents, pretrained on synthetic layout pages and adding a Global-to-Local Controllable Receptive Module for page-level structure and small regions.
 - **Weighted Boxes Fusion** (Solovyev et al., 2021): instead of discarding overlapping boxes as NMS does, it averages the coordinates of overlapping boxes of the same class, weighted by confidence.
+- **Sarvam Akshar** (Sarvam AI): an example that links extracted text to labelled blocks on an *Amrita Bazar Patrika* page. It was the reference for an interface where a reader compares a region and its text with the source image.
+- **Label Studio** (HumanSignal): the annotation tool in which the group drew and reviewed the region boxes (rectangle labels with an editable transcription per region).
+- **Gemini API** (Google): image understanding, used for the region-level Bengali transcription.
 
 ### 2.4 Procedure used
 
@@ -84,11 +88,44 @@ To make state-of-the-art Indic layout detectors easy to run, compare and inspect
 
 ### 2.6 Topics covered in the first two weeks of training
 
-> **TO BE FILLED BY THE STUDENT before submission.** The template requires the list of topics taught in the first two weeks of the internship (21 Sep - 4 Oct 2026). This information is not recorded in the project files, so it has not been guessed here.
->
-> 1. *(topic)*
-> 2. *(topic)*
-> 3. *(topic)*
+As listed in the group report for the IDEAS-TIH Section 2 schedule [reference 17]:
+
+- **21-25 September:** internship orientation; GitHub and AWS basics; building data science applications using Streamlit; basic statistics for data science; exploratory data analysis using XInsight.
+- **28 September - 2 October:** three machine learning sessions; how large language models work and are trained; an introduction to AI agents and agentic AI.
+
+### 2.7 The group project this work belongs to
+
+This report is the author's individual part of the group project *Understanding Historical Newspaper Images* (layout detection, advertisement analysis and Bengali OCR), carried out by eight interns [reference 10]. The group report asks how to understand historical newspaper images by finding the regions of a page, deciding their roles and reading the text they contain.
+
+**Corpus.** The group downloaded 800 pages of the Bengali newspaper *Jugantar* from the National Digital Library of India (NDLI) [reference 15], covering 1 January to 25 April 1946, and split them into eight batches of 100 pages, one per intern. The corpus is bounded by newspaper and date and was not sampled at random from the wider archive.
+
+| Batch | Intern | Issue dates (1946) |
+|---|---|---|
+| 01 | Abhinav Dey | 1-14 January |
+| 02 | Advay Mishra | 14-27 January |
+| 03 | Agniva Roy | 28 January - 11 February |
+| 04 | Anish Goswami | 11-25 February |
+| 05 | Gaurav Vyas | 26 February - 11 March |
+| **06** | **Rajdip Dhar (the author of this report)** | **11-26 March** |
+| 07 | Shreyosee Sen | 27 March - 10 April |
+| 08 | Sritama Kolay | 10-25 April |
+
+**Annotation workflow.** Members drew rectangular boxes directly in Label Studio, or started from detector or AI-tool proposals and reviewed them in the same interface. Each box records a region's position and role, and a text-bearing region carries an editable transcription. Gemini produced a first-pass Bengali transcription of each text region, and members who read Bengali compared it with the source crop and corrected it.
+
+```mermaid
+flowchart LR
+    A["NDLI page scan"] --> B["Draw or propose<br/>region boxes"] --> C["Review boxes<br/>and labels"] --> D["Read text with<br/>Gemini OCR"] --> E["Compare with<br/>the source scan"]
+```
+
+**Label scheme.** An early scheme had six labels. The final scheme has five, and the advertisement boxes were removed during editorial cleanup. Advertisements were studied separately as a binary classification problem (Section 5.8).
+
+| Stage | Labels | Treatment of advertising |
+|---|---|---|
+| Early annotation | Heading, subheading, body text, image, caption, advertisement | Advertisement was a sixth label |
+| Final annotation | Heading, subheading, body text, image, caption | Commercial boxes were removed during editorial cleanup |
+| Separate classifier | Advertisement / non-advertisement | A binary model treats ads as their own recognition problem |
+
+**What is in this repository.** The Live Layout Studio (layout detection, fusion, inspection, export), the layout evaluation and the Batch 06 annotation and transcription belong to this author. The group's other components, the Batch 01 annotation and OCR pipeline and the advertisement classifier (Abhinav Dey), and the *Amrita Bazar Patrika* pilot (Advay Mishra), are separate repositories; their reported results are summarised in Section 5.8 and were not re-run here.
 
 ---
 
@@ -143,7 +180,7 @@ flowchart LR
 |---|---|
 | Training dataset | **IndicDLP** (public, released by [AI4Bharat](https://github.com/AI4Bharat/IndicDLP), on Hugging Face): 119,806 pages, 12 document domains, 1,856,241 regions, 42 classes |
 | Collection / cleaning / preprocessing | Done by the dataset authors (human annotation, YOLO-format conversion). Not repeated here. |
-| Data used in this project | **Batch 06**: 100 scanned Bengali newspaper pages (March 1946) annotated in Label Studio with 10 classes (Headline, Subtitle, BodyText, Caption, Image, Header, Footer, Folio, PageNumber, Flag), 10,192 regions in total, each with OCR text. Used for the speed and agreement benchmark (Section 5.2, which needs no ground truth), as ground truth for the boxes in Section 5.4, and as the OCR reference in Section 5.6. |
+| Data used in this project | **Batch 06**: 100 scanned pages of the Bengali newspaper *Jugantar* (11-26 March 1946, from NDLI) annotated in Label Studio with 10 classes (Headline, Subtitle, BodyText, Caption, Image, Header, Footer, Folio, PageNumber, Flag), 10,192 regions in total, each with OCR text. Used for the speed and agreement benchmark (Section 5.2, which needs no ground truth), as ground truth for the boxes in Section 5.4, and as the OCR reference in Section 5.6. |
 | Inference preprocessing | Convert to RGB, resize to the inference size (default 1024 px on the long side), run the detector, drop boxes below the confidence threshold (default 0.25) |
 
 ### 4.4 Model selection, training and validation
@@ -275,7 +312,7 @@ No hypothesis test or confidence interval was computed. The speed benchmark (100
 
 ### 5.4 Evaluation against human annotation (Batch 06)
 
-**Data.** 100 scanned Bengali newspaper pages (March 1946) from the Label Studio export of 2026-11-21 (kept locally as `export_2026-11-21/`, not in the repository): 9,621 regions in 5 classes (BodyText 5,232, Image 1,547, Subtitle 1,530, Headline 1,251, Caption 61). The other five classes of the earlier export (Header, Footer, Folio, PageNumber, Flag) are no longer annotated, so they have no ground truth and are shown as "-". The 50 even-numbered pages tune the fusion weights; the 50 odd-numbered pages (5,106 regions, counts per class below) are held out and scored. The detectors' 42 classes are folded onto the annotation classes (`LS_CLASS_MAP` in `evaluate_fusion.py`; advertisements are counted as `Image`, all other text classes as `BodyText`, which is an assumption). Metric: COCO-style AP over IoU 0.50-0.95 (101-point), confidence cut-off 0.001, inference size 1024 (second scale 1280). The models are run on the **original** page images (`batch_06/`); the export's own `images/` folder has the boxes drawn on it and must not be used for scoring or training. Reproduce with:
+**Data.** 100 scanned pages of the Bengali newspaper *Jugantar* (11-26 March 1946, NDLI) from the Label Studio export of 2026-11-21 (kept locally as `export_2026-11-21/`, not in the repository): 9,621 regions in 5 classes (BodyText 5,232, Image 1,547, Subtitle 1,530, Headline 1,251, Caption 61). The other five classes of the earlier export (Header, Footer, Folio, PageNumber, Flag) are no longer annotated, so they have no ground truth and are shown as "-". The 50 even-numbered pages tune the fusion weights; the 50 odd-numbered pages (5,106 regions, counts per class below) are held out and scored. The detectors' 42 classes are folded onto the annotation classes (`LS_CLASS_MAP` in `evaluate_fusion.py`; advertisements are counted as `Image`, all other text classes as `BodyText`, which is an assumption). Metric: COCO-style AP over IoU 0.50-0.95 (101-point), confidence cut-off 0.001, inference size 1024 (second scale 1280). The models are run on the **original** page images (`batch_06/`); the export's own `images/` folder has the boxes drawn on it and must not be used for scoring or training. Reproduce with:
 
 ```
 python evaluate_fusion.py --ls-images batch_06 --ls-json export_2026-11-21/json --out-prefix batch06
@@ -370,6 +407,58 @@ Image regions were left out of the transcription on purpose, so they carry no te
 - Equal fusion weights were best on the tuning pages (Section 5.4), so they remain the default.
 - Cost is nearly constant across pages (343-419 ms for the ensemble) because every page is resized to the same inference size: even the densest page (157 regions) took 355 ms.
 
+
+### 5.8 Related group results (reported by other interns)
+
+The figures in this section come from the group report [reference 10] and the component reports it cites [references 11-13]. They were produced by other interns' code and data, which are not in this repository, and were **not** re-run or checked here. They are included so the layout work above can be read next to the rest of the project.
+
+**Group annotation inventory.** Of the 800 allocated pages, seven checked Label Studio exports (batches 01-03 and 05-08) were available for review; the checked Batch 04 export was not in the supplied folder. They hold 700 page tasks, of which 699 contain labelled rectangles. Counting one active annotation per task gives **41,813 boxes**, **33,279** of them with non-empty text linked to the region ID. When a task had several active annotations, the marked ground truth was used, otherwise the latest saved one.
+
+| Class | Boxes |
+|---|---:|
+| Body text | 26,330 |
+| Subheading | 8,084 |
+| Heading | 6,567 |
+| Image | 439 |
+| Caption | 393 |
+| **Total** | **41,813** |
+
+A non-empty transcription field measures coverage only: it does not show that the text is correct. The group report gives an example of a stored output that is clearly wrong, so no corpus-wide Bengali character or word error rate is claimed.
+
+**Batch 01 annotation and OCR release** (Abhinav Dey). Before cleanup the 100 pages had 8,258 automatic boxes (8,206 stored text entries). After manual review the release has 5,750 editorial boxes (5,707 text entries), a reduction of 2,508 boxes (30.4 %) from removing advertisements and stray detections.
+
+**Advertisement classifier** (Abhinav Dey). Early crop classifiers confused framed editorial material with advertisements, so a binary experiment added difficult non-advertisement crops (boxed news, bulletins, tall single-column stories) mined from 700 additional scans. Crops were padded to 224 x 224 pixels while keeping their aspect ratio, and a modified LeNet-5 was compared with ResNet-18 on a stratified split of the crops (68,043 in total: 30,405 advertisements and 37,638 non-advertisements).
+
+| Split | Advertisements | Non-advertisements | Total crops |
+|---|---:|---:|---:|
+| Training | 24,324 | 30,110 | 54,434 |
+| Validation | 3,040 | 3,763 | 6,803 |
+| Test | 3,041 | 3,765 | 6,806 |
+
+| Metric (6,806 test crops) | Modified LeNet-5 | ResNet-18 |
+|---|---:|---:|
+| Accuracy | 82.41 % | **85.01 %** |
+| Advertisement precision | 75.47 % | 80.48 % |
+| Advertisement recall | 89.84 % | 87.73 % |
+| F1 | 0.8203 | 0.8395 |
+| ROC-AUC | 0.9130 | 0.9334 |
+| Editorial regions flagged as ads (false positives) | 888 | 647 |
+| Missed advertisements (false negatives) | 309 | 373 |
+
+ResNet-18 produced 241 fewer false positives and 64 more false negatives than the modified LeNet-5, so its lower advertisement recall matters if the classifier is used to exclude regions from later analysis. On a 30-page full-page inspection that added page context (mastheads, editorial roles, figure-caption proximity), the pipeline reported 367 advertisements and protected 2,247 regions as editorial, at a mean 4.85 s per page. Remaining errors included ad-like editorial columns, advertisements near mastheads and small cinema advertisements.
+
+**Amrita Bazar Patrika pilot** (Advay Mishra). A supporting pilot on 100 NDLI scans of *Amrita Bazar Patrika* from 12 issues dated 1-12 April 1946 tested whether the region-based approach transfers to English OCR and issue metadata. A page-header crop was read with a local Qwen3-VL model; the body text used fused IndicDLP proposals and PP-OCRv6 models through PaddleOCR.
+
+| Measurement | Reported result |
+|---|---|
+| Printed-date reading before issue checks | 91.9 % (Qwen3-VL-4B), 98.0 % (8B) on the printed-date subset |
+| Metadata after issue checks | For both models: 100/100 page dates, 100/100 page numbers and 12/12 issue numbers agree with the scraper labels |
+| English OCR output | 11,506 text records, 2,905,424 characters, from 100 pages |
+| English character error rate | 1.9 % in four manually transcribed regions (24 of 1,240 characters) |
+| Runtime on the reported M1 laptop | 8.5 s per page for layout; 19.8 h in total for OCR |
+
+**Limits the group report states for these results.** The work is an engineering study on archival pages with no survey or formal hypothesis test. The layout comparison in Section 5.4 uses reference boxes derived from the tested ensemble, so it favours systems that reproduce the ensemble's box conventions. The advertisement benchmark splits crops rather than issues, so independence at the issue level is unverified. The four-region English spot check supports statements about those regions only. These limits prevent extending the scores to the full archive.
+
 ---
 
 ## 6. Conclusion
@@ -381,7 +470,7 @@ Image regions were left out of the transcription on purpose, so they carry no te
 - **Fine-tuning could not be shown to help.** Fine-tuned YOLOv10x reached 65.4 mAP[50:95] (67.1 with the boost) on the held-out pages, below the ensemble's 97.9, because the labels follow the ensemble's own box style. One run, one newspaper, five annotated classes.
 - **The Batch 06 text is human-checked.** All 8,074 annotated regions of the 100 pages carry a transcription (99.7 % of the letters are Bengali), which can serve as the reference for scoring any OCR engine.
 - **Equal fusion weights are kept.** They scored best on the tuning pages (98.4 vs 97.7 for 1.0 / 1.5).
-- **Weak spots are consistent.** Small page furniture, hierarchical classes (headline, list and question levels) and rare classes get the lowest confidence, and a small advertisement was misclassified in Demo 2.
+- **Weak spots are consistent.** Small page furniture, hierarchical classes (headline, list and question levels) and rare classes get the lowest confidence.
 
 **Limitations.** Rectangular boxes only; the reading order is a geometric XY-cut, not a learned model (it can fail on interleaved or overlapping boxes), and it has not been scored against human reading-order labels; the OCR text is assembled in that order, but the OCR itself is Gemini (cloud) and was not scored in this project; PDFs are rendered at 150 dpi and capped at 200 pages; Bengali and Indic label translations need native-speaker review; the two released detectors were not re-trained on IndicDLP (only one fine-tune on 40 newspaper pages was run); the speed benchmark covers one newspaper from one period; the accuracy evaluation covers one newspaper from one period with 10 coarse classes; Gemini OCR sends region images to Google.
 
@@ -392,6 +481,7 @@ Image regions were left out of the transcription on purpose, so they carry no te
 3. Collect human reading-order labels, evaluate the XY-cut against them and train a learned reading-order model; score Gemini and any Bengali-specialised OCR against the human-checked transcription of Batch 06 in `Rajdip_Dhar/`.
 4. Test the fine-tuned detector on other newspapers and on English pages, repeat with several seeds, and merge the 10-class scheme back into the 42-class output (or fine-tune all 42 classes) so the app can offer it next to the original models.
 5. Add per-page quality controls to the batch mode (retry, resume, per-page settings) and larger PDF support.
+6. For the group work (group report): split the advertisement evaluation by issue rather than by crop, measure Bengali character and word error rates against direct human transcriptions, and add human reading-order and article-grouping annotations to test how regions connect across columns and pages.
 
 ---
 
@@ -408,10 +498,18 @@ Image regions were left out of the transcription on purpose, so they carry no te
 7. AI4Bharat (AI4Bhārat, IIT Madras): [github.com/AI4Bharat](https://github.com/AI4Bharat), [ai4bharat.iitm.ac.in](https://ai4bharat.iitm.ac.in).
 8. Libraries: [Ultralytics](https://github.com/ultralytics/ultralytics), [DocLayout-YOLO](https://github.com/opendatalab/DocLayout-YOLO), [ensemble-boxes](https://github.com/ZFTurbo/Weighted-Boxes-Fusion), [Streamlit](https://streamlit.io), [PyTorch](https://pytorch.org).
 9. Model weights: Zenodo record 15881917 (`md2_PT_indicdlp_FT.pt`, `doclayout_yolo_indicdlp.pt`).
+10. A. Dey, A. Mishra, A. Roy, A. Goswami, G. Vyas, R. Dhar, S. Sen, S. Kolay. *Autumn Internship Group Report: Understanding Historical Newspaper Images.* IDEAS-TIH, Autumn Internship 2026 (group report; the author of this report is one of its eight authors).
+11. A. Dey. *100-Page Newspaper Layout Annotation and Bengali OCR Pipeline.* [Report](https://github.com/Editing-Karne-Wala/IndicDLP-100Page-Annotation-OCR/blob/main/REPORT.md), [repository](https://github.com/Editing-Karne-Wala/IndicDLP-100Page-Annotation-OCR).
+12. A. Dey. *Detection of Advertisements in Historical Bengali Newspapers.* [Report](https://github.com/Editing-Karne-Wala/IndicDLP-Ad-Classifier/blob/main/REPORT.md), [repository](https://github.com/Editing-Karne-Wala/IndicDLP-Ad-Classifier).
+13. A. Mishra. *Agentic Metadata Extraction for Amrita Bazar Patrika (Part 2)* and *Body-Text OCR for Amrita Bazar Patrika (Part 3)*, internship component reports, November 2026.
+14. Sarvam AI. [Introducing Sarvam Akshar](https://www.sarvam.ai/blogs/sarvam-akshar).
+15. National Digital Library of India, [newspaper archives](https://www.ndl.iitkgp.ac.in/ndl_nw) (source of the *Jugantar* and *Amrita Bazar Patrika* scans).
+16. HumanSignal, [Label Studio: rectangle labels](https://labelstud.io/tags/rectanglelabels). Google, [Gemini API: image understanding](https://ai.google.dev/gemini-api/docs/image-understanding).
+17. IDEAS-TIH, *Autumn Internship Program on Data Science 2026: Schedule for Section 2* ([document](https://drive.google.com/file/d/1-n9mhXgLrVqq2qEjLM82VajUzHL2kE39/view)).
 
 #### Acknowledgements
 
-This project builds directly on the work of **AI4Bharat** and the **IndicDLP** authors (O. Nath, S. Kukkala, M. Khapra and R. K. Sarvadevabhatla). The IndicDLP dataset (119,806 pages, 12 document domains, 42 region classes), the IndicDLP annotation guideline and the IndicDLP-fine-tuned YOLOv10x and DocLayout-YOLO checkpoints are their work. They are used here as released; this project did not create them. The author thanks AI4Bharat for releasing the dataset, the models and the code openly ([github.com/AI4Bharat/IndicDLP](https://github.com/AI4Bharat/IndicDLP), MIT licence), and thanks the authors of YOLOv10, DocLayout-YOLO and Weighted Boxes Fusion cited above. Anyone reusing the dataset or the checkpoints should follow their licences and cite the IndicDLP paper (reference 4).
+This project builds directly on the work of **AI4Bharat** and the **IndicDLP** authors (O. Nath, S. Kukkala, M. Khapra and R. K. Sarvadevabhatla). The IndicDLP dataset (119,806 pages, 12 document domains, 42 region classes), the IndicDLP annotation guideline and the IndicDLP-fine-tuned YOLOv10x and DocLayout-YOLO checkpoints are their work. They are used here as released; this project did not create them. The author thanks AI4Bharat for releasing the dataset, the models and the code openly ([github.com/AI4Bharat/IndicDLP](https://github.com/AI4Bharat/IndicDLP), MIT licence), and thanks the authors of YOLOv10, DocLayout-YOLO and Weighted Boxes Fusion cited above. The author also thanks the other members of the internship group (Abhinav Dey, Advay Mishra, Agniva Roy, Anish Goswami, Gaurav Vyas, Shreyosee Sen and Sritama Kolay), whose annotation, advertisement-classifier and *Amrita Bazar Patrika* work is summarised in Sections 2.7 and 5.8, and the project mentor, Dr. Sujoy Kumar Biswas. Anyone reusing the dataset or the checkpoints should follow their licences and cite the IndicDLP paper (reference 4).
 
 ### Appendix 2: Survey Questionnaire
 
@@ -421,11 +519,18 @@ Not applicable. No survey was conducted.
 
 https://github.com/RajdipDhar2007/IndicDLP-Live-Layout-Studio
 
+Other repositories of the group (not part of this repository):
+
+- [100-page *Jugantar* annotation and OCR pipeline](https://github.com/Editing-Karne-Wala/IndicDLP-100Page-Annotation-OCR) (Abhinav Dey)
+- [Historical newspaper advertisement classifier](https://github.com/Editing-Karne-Wala/IndicDLP-Ad-Classifier) (Abhinav Dey)
+- [Layout implementation](https://github.com/Matrix4576/IndicDLP-Live-Layout-Studio) (Agniva Roy) and [pipeline and benchmark branch](https://github.com/Editing-Karne-Wala/IndicDLP-Live-Layout-Studio/tree/release/pipeline-and-benchmark) (Abhinav Dey)
+
 ### Appendix 4: Other documents
 
 - Benchmark data: `benchmark_results.json`, produced by `benchmark.py` (both in the repository).
 - Evaluation on human-annotated pages: `batch06_evaluation_results.json`, `batch06_evaluation_per_class.md`, `batch06_fusion_weights.json`, produced by `evaluate_fusion.py`. The annotated pages themselves are in the local folder `export_2026-11-21` (100 pages, 9,621 regions, 8,071 with OCR text; not in the repository). A later hand-in copy of the same 100 pages with four classes (Headline, Subtitle, BodyText, Caption; no Image boxes) is in `Rajdip_Dhar/` (also not in the repository).
 - IndicDLP annotation guideline: `guidelines/ANNOTATION_GUIDELINE_BY_CATEGORY.pdf`.
+- Group report: *Autumn Internship Group Report: Understanding Historical Newspaper Images* (eight authors, IDEAS-TIH, 2026). Sections 2.6, 2.7 and 5.8 of this `README.md` adapt material from it; the PDF is not stored in the repository.
 - Copy of this report: this `README.md`. A PDF copy and the presentation can be added to the repository or Google Drive and linked here.
 
 ### Appendix 5: The 42 region classes
