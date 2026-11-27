@@ -1,0 +1,41 @@
+{
+  "source": "Rajdip_Dhar\\2_readable_export\\json",
+  "pages": 100,
+  "regions": 8074,
+  "with_text": 8074,
+  "chars": 1542581,
+  "mean_chars_per_region": 191.1,
+  "mean_regions_per_page": 80.7,
+  "median_regions_per_page": 85.0,
+  "mean_chars_per_page": 15426,
+  "per_class": {
+    "BodyText": {
+      "regions": 5232,
+      "with_text": 5232,
+      "chars": 1456708,
+      "mean_chars": 278.4
+    },
+    "Caption": {
+      "regions": 61,
+      "with_text": 61,
+      "chars": 4498,
+      "mean_chars": 73.7
+    },
+    "Headline": {
+      "regions": 1251,
+      "with_text": 1251,
+      "chars": 38262,
+      "mean_chars": 30.6
+    },
+    "Subtitle": {
+      "regions": 1530,
+      "with_text": 1530,
+      "chars": 43113,
+      "mean_chars": 28.2
+    }
+  },
+  "script_share_of_letters": {
+    "bengali": 0.9968,
+    "latin": 0.0032
+  }
+}

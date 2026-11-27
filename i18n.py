@@ -80,7 +80,7 @@ def label(lang: str, cls_name: str) -> str:
 # ----------------------------------------------------------------------------
 # Interface text (English -> Bengali). The English text is the key, so an entry that is
 # missing simply shows in English. `{name}` slots are filled by ui(). Product and format names
-# (YOLOv10x, DocLayout-YOLO, Gemini, EasyOCR, JSON, COCO, PNG, mAP ...) stay in English.
+# (YOLOv10x, DocLayout-YOLO, Gemini, JSON, COCO, PNG, mAP ...) stay in English.
 # Like the class names above, these should be read by a native speaker before formal use.
 # ----------------------------------------------------------------------------
 UI_BN: dict[str, str] = {
@@ -138,7 +138,6 @@ UI_BN: dict[str, str] = {
     "Off: only the layout annotations are produced, no text is read and no Gemini requests are made.":
         "বন্ধ থাকলে: শুধু লেআউট চিহ্নিতকরণ হবে, কোনো লেখা পড়া হবে না এবং Gemini-তে কোনো অনুরোধ যাবে না।",
     "Engine": "ইঞ্জিন",
-    "Gemini: cloud, most accurate. EasyOCR: local, works offline.": "Gemini: ক্লাউডে চলে, সবচেয়ে নির্ভুল। EasyOCR: লোকাল, অফলাইনে চলে।",
     "Gemini API key": "Gemini API কী",
     "or set GEMINI_API_KEY": "অথবা GEMINI_API_KEY সেট করুন",
     "Kept only in this browser session. Leave empty if GEMINI_API_KEY is set.":
@@ -146,8 +145,7 @@ UI_BN: dict[str, str] = {
     "Gemini model for per-region OCR": "অঞ্চলভিত্তিক OCR-এর জন্য Gemini মডেল",
     "Used when you click a region (or press Transcribe All). Each region is sent only once.":
         "কোনো অঞ্চলে ক্লিক করলে (বা “সব অঞ্চল লিখে নিন” চাপলে) ব্যবহৃত হয়। প্রতিটি অঞ্চল মাত্র একবার পাঠানো হয়।",
-    "Gemini sends each text region's image to Google. Use EasyOCR to stay offline.":
-        "Gemini প্রতিটি লেখার অঞ্চলের ছবি Google-এ পাঠায়। অফলাইনে থাকতে EasyOCR ব্যবহার করুন।",
+    "Gemini sends each text region's image to Google.": "Gemini প্রতিটি লেখার অঞ্চলের ছবি Google-এ পাঠায়।",
     "Device: **{device}**": "ডিভাইস: **{device}**",
     "🔄 Reset to defaults": "🔄 ডিফল্টে ফিরুন",
     # source / workspace
@@ -178,7 +176,9 @@ UI_BN: dict[str, str] = {
     "Runs detection on every page in the file manager with the current sidebar settings (no animation) and builds one ZIP: per-page JSON, PAGE-XML and text, plus COCO JSON and HTML for the whole batch. Uses Ensemble Fusion when two models are on, otherwise the single model.":
         "সাইডবারের বর্তমান সেটিং অনুযায়ী ফাইল ম্যানেজারের প্রতিটি পৃষ্ঠায় শনাক্তকরণ চালায় (অ্যানিমেশন ছাড়া) এবং একটি ZIP তৈরি করে: প্রতি পৃষ্ঠার JSON, PAGE-XML ও টেক্সট, এবং পুরো ব্যাচের COCO JSON ও HTML। দুটি মডেল চালু থাকলে Ensemble Fusion, নইলে একক মডেল ব্যবহার হয়।",
     "Read the text of every region (OCR)": "প্রতিটি অঞ্চলের লেখা পড়ুন (OCR)",
-    "Slower: each page is OCR'd with the engine chosen in the sidebar.": "ধীর: সাইডবারে বাছাই করা ইঞ্জিনে প্রতিটি পৃষ্ঠায় OCR চলে।",
+    "Slower: each page is read with Gemini (needs an API key).": "ধীর: প্রতিটি পৃষ্ঠা Gemini দিয়ে পড়া হয় (API কী লাগে)।",
+    "No Gemini API key, so the batch runs without reading the text.": "Gemini API কী নেই, তাই ব্যাচ লেখা না পড়েই চলবে।",
+    "Add a Gemini API key in the sidebar to read the text of the fused regions.": "ফিউজ করা অঞ্চলের লেখা পড়তে সাইডবারে Gemini API কী দিন।",
     "▶ Run batch": "▶ ব্যাচ চালান",
     "Starting…": "শুরু হচ্ছে…",
     "Page {n}/{total}: {name}": "পৃষ্ঠা {n}/{total}: {name}",
@@ -212,8 +212,8 @@ UI_BN: dict[str, str] = {
     "Model": "মডেল", "Time (ms)": "সময় (ms)",
     "Region": "অঞ্চল", "Confidence": "আস্থা", "Width": "প্রস্থ", "Height": "উচ্চতা", "Text": "লেখা",
     "#### Model benchmark": "#### মডেল বেঞ্চমার্ক",
-    "Published mAP (IndicDLP paper) and measured speed on the sample pages from `benchmark.py` (median over pages, 1024 px, confidence 0.25).":
-        "প্রকাশিত mAP (IndicDLP গবেষণাপত্র) এবং `benchmark.py`-এর নমুনা পৃষ্ঠায় মাপা গতি (পৃষ্ঠাগুলোর মধ্যমা, ১০২৪ px, আস্থা ০.২৫)।",
+    "Published mAP (IndicDLP paper) and measured speed on the 100 Batch 06 pages from `benchmark.py` (median over pages, 1024 px, confidence 0.25).":
+        "প্রকাশিত mAP (IndicDLP গবেষণাপত্র) এবং `benchmark.py`-এর ১০০টি Batch 06 পৃষ্ঠায় মাপা গতি (পৃষ্ঠাগুলোর মধ্যমা, ১০২৪ px, আস্থা ০.২৫)।",
     "mAP (published)": "mAP (প্রকাশিত)",
     "Params (M)": "প্যারামিটার (M)",
     "Weights (MB)": "ওয়েটস (MB)",
@@ -222,8 +222,7 @@ UI_BN: dict[str, str] = {
     "Avg regions / page": "গড় অঞ্চল / পৃষ্ঠা",
     "Avg confidence": "গড় আস্থা",
     "#### OCR benchmark": "#### OCR বেঞ্চমার্ক",
-    "EasyOCR figures are from `benchmark.py`; Gemini rows fill in as you run OCR on regions in this session.":
-        "EasyOCR-এর সংখ্যা `benchmark.py` থেকে; এই সেশনে অঞ্চলে OCR চালালে Gemini-র সারিগুলো যুক্ত হবে।",
+    "Gemini rows fill in as you run OCR on regions in this session.": "এই সেশনে অঞ্চলে OCR চালালে Gemini-র সারিগুলো এখানে যুক্ত হবে।",
     "No OCR timings yet. Run Gemini OCR on a region to see its speed here.":
         "এখনও কোনো OCR সময় নেই। গতি দেখতে কোনো অঞ্চলে Gemini OCR চালান।",
     "Regions read": "পড়া অঞ্চল",
@@ -231,8 +230,6 @@ UI_BN: dict[str, str] = {
     "Avg time / page (s)": "গড় সময় / পৃষ্ঠা (s)",
     "Errors": "ত্রুটি",
     "Source": "উৎস",
-    "EasyOCR (local, Bengali + English)": "EasyOCR (লোকাল, বাংলা + ইংরেজি)",
-    "benchmark.py, {n} sample pages": "benchmark.py, {n}টি নমুনা পৃষ্ঠা",
     "Gemini {model} (cloud, one request per region)": "Gemini {model} (ক্লাউড, প্রতি অঞ্চলে একটি অনুরোধ)",
     "measured in this session": "এই সেশনে মাপা",
     "Regions per class": "শ্রেণি অনুযায়ী অঞ্চল",
@@ -244,12 +241,11 @@ UI_BN: dict[str, str] = {
     "Preparing OCR": "OCR প্রস্তুত হচ্ছে",
     "Transcription finished: {done} completed, {errors} errors, {total} eligible regions.":
         "লেখা পড়া শেষ: {total}টি যোগ্য অঞ্চলের মধ্যে {done}টি সম্পন্ন, {errors}টি ত্রুটি।",
-    "Reading text in the fused regions ({engine})…": "ফিউজ করা অঞ্চলের লেখা পড়া হচ্ছে ({engine})…",
+    "Reading text in the fused regions (Gemini)…": "ফিউজ করা অঞ্চলের লেখা পড়া হচ্ছে (Gemini)…",
     "Automatic OCR failed: {err}": "স্বয়ংক্রিয় OCR ব্যর্থ হয়েছে: {err}",
-    "📝 Re-run with {engine} (Bengali + English)": "📝 {engine} দিয়ে আবার চালান (বাংলা + ইংরেজি)",
-    "📝 Extract text with {engine} (Bengali + English)": "📝 {engine} দিয়ে লেখা বের করুন (বাংলা + ইংরেজি)",
-    "Starting {engine}…": "{engine} শুরু হচ্ছে…",
-    "OCR needs EasyOCR: pip install easyocr": "OCR-এর জন্য EasyOCR দরকার: pip install easyocr",
+    "📝 Re-run with Gemini (Bengali + English)": "📝 Gemini দিয়ে আবার চালান (বাংলা + ইংরেজি)",
+    "📝 Extract text with Gemini (Bengali + English)": "📝 Gemini দিয়ে লেখা বের করুন (বাংলা + ইংরেজি)",
+    "Starting Gemini…": "Gemini শুরু হচ্ছে…",
     "💡 Click any box to open its cutout: coordinates, PNG download, ESPCN x2 upscale and Gemini OCR.":
         "💡 যেকোনো বাক্সে ক্লিক করে তার কাটআউট খুলুন: স্থানাঙ্ক, PNG ডাউনলোড, ESPCN x2 বড় করা এবং Gemini OCR।",
     "💡 Click any box to open its cutout: coordinates, PNG download, ESPCN x2 upscale. OCR is switched off in the sidebar.":
@@ -273,8 +269,8 @@ UI_BN: dict[str, str] = {
     "No Gemini API key. Enter it in the sidebar, or set GEMINI_API_KEY / GOOGLE_GEMINI_API_KEY in .env.":
         "Gemini API কী নেই। সাইডবারে দিন, অথবা .env-এ GEMINI_API_KEY / GOOGLE_GEMINI_API_KEY সেট করুন।",
     "Gemini rejected the request (HTTP {code}). Check the API key.": "Gemini অনুরোধ প্রত্যাখ্যান করেছে (HTTP {code})। API কী যাচাই করুন।",
-    "Gemini could not read the page ({last}). Daily free-tier limits may be used up; try EasyOCR.":
-        "Gemini পৃষ্ঠাটি পড়তে পারেনি ({last})। দৈনিক বিনামূল্যের সীমা শেষ হয়ে থাকতে পারে; EasyOCR চেষ্টা করুন।",
+    "Gemini could not read the page ({last}). Daily free-tier limits may be used up; try again later.":
+        "Gemini পৃষ্ঠাটি পড়তে পারেনি ({last})। দৈনিক বিনামূল্যের সীমা শেষ হয়ে থাকতে পারে; পরে আবার চেষ্টা করুন।",
     "Gemini OCR failed: {message}": "Gemini OCR ব্যর্থ হয়েছে: {message}",
     # legend groups
     "Headlines": "প্রধান শিরোনাম", "Titles": "শিরোনাম ও অধ্যায়", "Body text": "মূল লেখা", "Lists": "তালিকা",

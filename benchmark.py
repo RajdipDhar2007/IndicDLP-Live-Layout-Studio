@@ -2,9 +2,9 @@
 
 Run:  python benchmark.py            -> writes benchmark_results.json and prints Markdown tables.
 
-Measured on the sample pages in docs/images (no ground truth is available for them, so accuracy
-is NOT measured here; published mAP is quoted from the IndicDLP paper). Measured: model size,
-parameters, latency, detections, confidence, and agreement between models.
+Measured on the 100 Batch 06 newspaper pages in batch_06/ (accuracy against the human annotation is
+measured separately by evaluate_fusion.py; published mAP is quoted from the IndicDLP paper). Measured: model
+size, parameters, latency, detections, confidence and agreement between models.
 """
 import json, statistics as st, time, sys
 from pathlib import Path
@@ -13,8 +13,7 @@ from PIL import Image
 import torch
 
 ROOT = Path(__file__).resolve().parent
-IMGS = sorted(p for p in (ROOT / "docs/images").glob("*") if p.suffix.lower() in {".png", ".jpg"} and "output" not in p.name
-              and p.name != "IndicDLP_instances.png")
+IMGS = sorted(p for p in (ROOT / "batch_06").glob("*") if p.suffix.lower() in {".png", ".jpg"})
 DEV = "cuda" if torch.cuda.is_available() else "cpu"
 CONF, IOU, SIZE, REPS = 0.25, 0.70, 1024, 3
 SPECS = {"YOLOv10x": ("md2_PT_indicdlp_FT.pt", "yolo"), "DocLayout-YOLO": ("doclayout_yolo_indicdlp.pt", "doclayout")}
@@ -83,7 +82,7 @@ def timed(fn):
 
 def main():
     imgs = [(p.name, Image.open(p).convert("RGB")) for p in IMGS]
-    res = {"device": DEV, "images": [n for n, _ in imgs], "conf": CONF, "iou": IOU, "imgsz": SIZE, "reps": REPS, "models": {}}
+    res = {"device": DEV, "source": "batch_06", "images": [n for n, _ in imgs], "conf": CONF, "iou": IOU, "imgsz": SIZE, "reps": REPS, "models": {}}
     single, boosted = {}, {}
     for name, (f, kind) in SPECS.items():
         m = load(kind, f)
@@ -120,23 +119,8 @@ def main():
         "yolo_in_ens": st.mean(agreement(boosted[n]["YOLOv10x"], boosted[n]["Ensemble"]) for n in single),
         "doclayout_in_ens": st.mean(agreement(boosted[n]["DocLayout-YOLO"], boosted[n]["Ensemble"]) for n in single),
     }
-    # OCR (EasyOCR) speed on the ensemble regions
-    try:
-        import easyocr
-        rd = easyocr.Reader(["bn", "en"], gpu=DEV == "cuda", verbose=False)
-        ts, cnt = [], 0
-        for n, im in imgs[:3]:
-            crops = [np.array(im.crop(tuple(int(v) for v in d["box"]))) for d in boosted[n]["Ensemble"]
-                     if d["box"][2] - d["box"][0] > 8 and d["box"][3] - d["box"][1] > 8]
-            t = time.perf_counter()
-            for c in crops:
-                rd.readtext(c, detail=0, paragraph=True)
-            ts.append(time.perf_counter() - t); cnt += len(crops)
-        res["easyocr"] = dict(pages=len(ts), regions=cnt, sec_per_page=st.mean(ts), ms_per_region=1000 * sum(ts) / max(cnt, 1))
-    except Exception as e:
-        res["easyocr"] = {"error": f"{type(e).__name__}: {e}"}
     (ROOT / "benchmark_results.json").write_text(json.dumps(res, indent=2))
-    print(json.dumps(res, indent=2))
+    print("done", res["agreement"])
 
 
 if __name__ == "__main__":

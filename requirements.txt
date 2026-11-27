@@ -9,7 +9,6 @@ huggingface_hub          # imported by doclayout-yolo
 pillow>=10
 numpy
 opencv-contrib-python   # cv2.dnn_superres for the ESPCN x2 crop upscaler
-easyocr                  # offline text extraction (OCR) for Bengali and English
 scikit-learn          # ad classifier benchmark metrics (train_benchmark.py)
 matplotlib
 pyyaml

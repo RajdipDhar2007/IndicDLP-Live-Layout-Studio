@@ -53,7 +53,7 @@ ESPCN_MODEL = ROOT / "ESPCN_x2.pb"
 EXAMPLE_DIRS = [ROOT / "batch_06"]  # the Sample gallery lists the Batch 06 pages
 annotation_view = components.declare_component("indicdlp_annotation_view", path=str(ROOT / "annotation_view"))
 ZENODO = "https://zenodo.org/records/15881917/files/{}?download=1"
-DEFAULTS = dict(ocr_on=True, ocr_engine="gemini", conf=0.25, iou=0.70, imgsz=1024, speed="Normal", boost=True, fuse=True, lang="en",
+DEFAULTS = dict(ocr_on=True, conf=0.25, iou=0.70, imgsz=1024, speed="Normal", boost=True, fuse=True, lang="en",
                 gemini_model="Gemini 3.1 Flash-Lite (faster)", simplify=False, skip_media=True)
 
 st.set_page_config(page_title="IndicDLP Live Layout Studio", page_icon="📄", layout="wide")
@@ -216,12 +216,6 @@ def load_model(key: str, device: str):
 NON_TEXT = {"figure", "table", "formula", "advertisement", "flag", "placeholder-text", "image"}
 
 
-@st.cache_resource(show_spinner=False)
-def load_ocr(device: str):
-    import easyocr
-    return easyocr.Reader(["bn", "en"], gpu=device != "cpu", verbose=False)  # Bengali + English
-
-
 GEMINI_MODELS = [m for m in dict.fromkeys([os.environ.get("GEMINI_MODEL", "gemini-3.5-flash"), "gemini-3.5-flash",
                                            "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]) if m]
 GEMINI_PROMPT = ("The image is a contact sheet of {n} snippets cut from a document page. Each snippet sits under a yellow label "
@@ -286,12 +280,11 @@ def gemini_read_sheet(sheet: Image.Image, ids: list[int], key: str) -> dict[int,
                 raise PermissionError(T("Gemini rejected the request (HTTP {code}). Check the API key.", code=e.code)) from e
         except Exception as e:  # timeout, blocked or malformed answer: try the next model
             last = f"{model}: {type(e).__name__}"
-    raise RuntimeError(T("Gemini could not read the page ({last}). Daily free-tier limits may be used up; try EasyOCR.", last=last))
+    raise RuntimeError(T("Gemini could not read the page ({last}). Daily free-tier limits may be used up; try again later.", last=last))
 
 
-def ocr_page(page: Image.Image, dets: list[dict], device: str, progress=None, engine: str = "easyocr") -> None:
-    """Reads the text of every text-bearing region and stores it in det["text"] ('' for non-text regions)."""
-    import numpy as np
+def ocr_page(page: Image.Image, dets: list[dict], progress=None) -> None:
+    """Reads the text of every text-bearing region with Gemini and stores it in det["text"] ('' for non-text regions)."""
     w, h = page.size
     todo = [d for d in dets if d["label"] not in NON_TEXT]
     for d in dets:
@@ -302,36 +295,25 @@ def ocr_page(page: Image.Image, dets: list[dict], device: str, progress=None, en
         pad = 4
         return page.crop((max(0, int(x1) - pad), max(0, int(y1) - pad), min(w, int(x2) + pad), min(h, int(y2) + pad)))
 
-    if engine == "gemini":
-        key = gemini_key()
-        if not key:
-            raise PermissionError(T("No Gemini API key. Enter it in the sidebar or set GEMINI_API_KEY."))
-        items = [(n, d, crop_of(d)) for n, d in enumerate(todo, 1)]
-        chunks, cur, tall = [], [], 0
-        for it in items:  # keep every sheet reasonably small so Gemini can read it
-            if cur and (len(cur) >= 25 or tall + it[2].height > 6000):
-                chunks.append(cur)
-                cur, tall = [], 0
-            cur.append(it)
-            tall += it[2].height + 48
-        if cur:
+    key = gemini_key()
+    if not key:
+        raise PermissionError(T("No Gemini API key. Enter it in the sidebar or set GEMINI_API_KEY."))
+    items = [(n, d, crop_of(d)) for n, d in enumerate(todo, 1)]
+    chunks, cur, tall = [], [], 0
+    for it in items:  # keep every sheet reasonably small so Gemini can read it
+        if cur and (len(cur) >= 25 or tall + it[2].height > 6000):
             chunks.append(cur)
-        for n, chunk in enumerate(chunks, 1):
-            texts = gemini_read_sheet(contact_sheet([(i, c) for i, _, c in chunk]), [i for i, _, _ in chunk], key)
-            for i, d, _ in chunk:
-                d["text"] = texts.get(i, "")
-            if progress:
-                progress(n / len(chunks), f"Gemini {n}/{len(chunks)}")
-        return
-    reader = load_ocr(device)
-    for n, d in enumerate(todo, 1):
-        try:
-            lines = reader.readtext(np.array(crop_of(d)), detail=0, paragraph=True)
-        except Exception:
-            lines = []
-        d["text"] = "\n".join(t.strip() for t in lines if t.strip())
+            cur, tall = [], 0
+        cur.append(it)
+        tall += it[2].height + 48
+    if cur:
+        chunks.append(cur)
+    for n, chunk in enumerate(chunks, 1):
+        texts = gemini_read_sheet(contact_sheet([(i, c) for i, _, c in chunk]), [i for i, _, _ in chunk], key)
+        for i, d, _ in chunk:
+            d["text"] = texts.get(i, "")
         if progress:
-            progress(n / len(todo), f"OCR {n}/{len(todo)}")
+            progress(n / len(chunks), f"Gemini {n}/{len(chunks)}")
 
 
 def predict_once(key: str, image: Image.Image, conf: float, iou: float, imgsz: int, device: str) -> list[dict]:
@@ -641,16 +623,11 @@ def sidebar() -> dict:
         st.toggle(T("Enable OCR"), key="ocr_on",
                   help=T("Off: only the layout annotations are produced, no text is read and no Gemini requests are made."))
         if st.session_state["ocr_on"]:
-            # Plain product names: Streamlit does not repaint the shown text of an unchanged selection when only the language changes.
-            st.selectbox(T("Engine"), ["gemini", "easyocr"], key="ocr_engine",
-                         format_func=lambda k: {"gemini": "Gemini", "easyocr": "EasyOCR"}[k])
-            st.caption(T("Gemini: cloud, most accurate. EasyOCR: local, works offline."))
-        if st.session_state["ocr_on"] and st.session_state["ocr_engine"] == "gemini":
             st.text_input(T("Gemini API key"), type="password", key="gemini_key",
                           placeholder=T("or set GEMINI_API_KEY"), help=T("Kept only in this browser session. Leave empty if GEMINI_API_KEY is set."))
             st.selectbox(T("Gemini model for per-region OCR"), list(GEMINI_OCR_MODELS), key="gemini_model",
                          help=T("Used when you click a region (or press Transcribe All). Each region is sent only once."))
-            st.caption(T("Gemini sends each text region's image to Google. Use EasyOCR to stay offline."))
+            st.caption(T("Gemini sends each text region's image to Google."))
         st.divider()
         st.caption(T("Device: **{device}**", device=device_name().upper()))
         st.button(T("🔄 Reset to defaults"), width="stretch", on_click=reset_defaults)
@@ -790,12 +767,12 @@ def batch_panel(cfg: dict, lang: str) -> None:
         with_ocr = False
         if st.session_state.get("ocr_on", True):
             with_ocr = st.toggle(T("Read the text of every region (OCR)"), value=False, key="batch_ocr",
-                                 help=T("Slower: each page is OCR'd with the engine chosen in the sidebar."))
+                                 help=T("Slower: each page is read with Gemini (needs an API key)."))
         if st.button(T("▶ Run batch"), key="run_batch", type="primary"):
             device = device_name()
-            engine = st.session_state.get("ocr_engine", "gemini")
-            if with_ocr and engine == "gemini" and not gemini_key():
-                engine = "easyocr"
+            if with_ocr and not gemini_key():
+                with_ocr = False  # no API key: detect without reading the text
+                st.warning(T("No Gemini API key, so the batch runs without reading the text."))
             bar = st.progress(0.0, text=T("Starting…"))
             pages, failed, result_key = [], [], ""
             for n, item in enumerate(items, 1):
@@ -806,7 +783,7 @@ def batch_panel(cfg: dict, lang: str) -> None:
                     result_key = "fusion" if "fusion" in res else next(iter(res))
                     dets = res[result_key]["dets"]
                     if with_ocr:
-                        ocr_page(img, dets, device, None, engine)
+                        ocr_page(img, dets)
                     pages.append(dict(name=item["name"], width=img.width, height=img.height, dets=dets, image=None))
                 except Exception as exc:  # one bad page must not stop the batch
                     failed.append(f"{item['name']}: {exc}")
@@ -1272,16 +1249,8 @@ def benchmark_rows() -> list[dict]:
 
 
 def ocr_benchmark_rows() -> list[dict]:
-    """OCR benchmark: EasyOCR from benchmark_results.json, Gemini measured live from this session's region requests."""
+    """OCR benchmark: Gemini timings measured live from this session's region requests."""
     rows = []
-    try:
-        e = json.loads((ROOT / "benchmark_results.json").read_text(encoding="utf-8"))["easyocr"]
-        rows.append({T("Engine"): T("EasyOCR (local, Bengali + English)"), T("Regions read"): e["regions"],
-                     T("Avg time / region (ms)"): round(e["ms_per_region"]),
-                     T("Avg time / page (s)"): round(e["sec_per_page"], 1), T("Errors"): None,
-                     T("Source"): T("benchmark.py, {n} sample pages", n=e['pages'])})
-    except (OSError, ValueError, KeyError):
-        pass
     by_model: dict[str, list[dict]] = {}
     for rec in st.session_state.get("region_records", {}).values():
         o = rec.get("ocr", {})
@@ -1310,12 +1279,12 @@ def summary(image_name: str, lang: str) -> None:
     st.dataframe(rows, width="stretch", hide_index=True)
 
     st.markdown(T("#### Model benchmark"))
-    st.caption(T("Published mAP (IndicDLP paper) and measured speed on the sample pages from `benchmark.py` "
+    st.caption(T("Published mAP (IndicDLP paper) and measured speed on the 100 Batch 06 pages from `benchmark.py` "
                  "(median over pages, 1024 px, confidence 0.25)."))
     st.dataframe(benchmark_rows(), width="stretch", hide_index=True)
 
     st.markdown(T("#### OCR benchmark"))
-    st.caption(T("EasyOCR figures are from `benchmark.py`; Gemini rows fill in as you run OCR on regions in this session."))
+    st.caption(T("Gemini rows fill in as you run OCR on regions in this session."))
     ocr_rows = ocr_benchmark_rows()
     if ocr_rows:
         st.dataframe(ocr_rows, width="stretch", hide_index=True)
@@ -1348,29 +1317,27 @@ def summary(image_name: str, lang: str) -> None:
     for tab, key in zip(tabs, keys):
         r = results[key]
         with tab:
-            engine = st.session_state.get("ocr_engine", "gemini")
             ocr_on = st.session_state.get("ocr_on", True)
             if ocr_on and key == "fusion" and not r.get("auto_ocr"):  # Ensemble Fusion is read automatically, once
-                r["auto_ocr"] = True
-                use = engine if engine != "gemini" or gemini_key() else "easyocr"
-                with st.spinner(T("Reading text in the fused regions ({engine})…", engine='Gemini' if use == 'gemini' else 'EasyOCR')):
-                    try:
-                        ocr_page(page, r["dets"], device_name(), None, use)
-                    except Exception as e:
-                        st.warning(T("Automatic OCR failed: {err}", err=e))
-                        for d in r["dets"]:
-                            d.pop("text", None)
+                if not gemini_key():
+                    st.info(T("Add a Gemini API key in the sidebar to read the text of the fused regions."))
+                else:
+                    r["auto_ocr"] = True
+                    with st.spinner(T("Reading text in the fused regions (Gemini)…")):
+                        try:
+                            ocr_page(page, r["dets"])
+                        except Exception as e:
+                            st.warning(T("Automatic OCR failed: {err}", err=e))
+                            for d in r["dets"]:
+                                d.pop("text", None)
             has_text = any("text" in d for d in r["dets"])
-            nice = "Gemini" if engine == "gemini" else "EasyOCR"
-            if ocr_on and st.button(T("📝 Re-run with {engine} (Bengali + English)" if has_text else "📝 Extract text with {engine} (Bengali + English)",
-                                     engine=nice), key=f"ocr_{key}"):
-                bar = st.progress(0.0, text=T("Starting {engine}…", engine=nice))
+            if ocr_on and st.button(T("📝 Re-run with Gemini (Bengali + English)" if has_text else "📝 Extract text with Gemini (Bengali + English)"),
+                                    key=f"ocr_{key}"):
+                bar = st.progress(0.0, text=T("Starting Gemini…"))
                 try:
-                    ocr_page(page, r["dets"], device_name(), lambda p, t: bar.progress(p, text=t), engine)
+                    ocr_page(page, r["dets"], lambda p, t: bar.progress(p, text=t))
                 except (PermissionError, RuntimeError) as e:
                     st.error(str(e))
-                except ImportError:
-                    st.error(T("OCR needs EasyOCR: pip install easyocr"))
                 bar.empty()
                 has_text = any("text" in d for d in r["dets"])
             st.caption(T("💡 Click any box to open its cutout: coordinates, PNG download, ESPCN x2 upscale and Gemini OCR." if ocr_on

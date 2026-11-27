@@ -5,7 +5,7 @@ Component: Standalone Broadsheet Auto-Annotator & 100% OCR Pipeline (Production 
 Features:
   - Multi-Project API Key Pool Rotation (Fix B: Bypasses single-account 15 RPM bottleneck)
   - Adaptive 4.1s Pacing & Exponential Backoff on 429/503/504 (Fix A: Rate-Limit Protection)
-  - Seamless Local EasyOCR Bengali Fallback (Zero empty boxes)
+  - Gemini transcription per region; a region Gemini cannot read gets its class name as placeholder text
   - Dynamic Hardware Detection (NVIDIA CUDA GPU vs. AMD / Intel CPU)
 ========================================================================================
 """
@@ -18,9 +18,7 @@ import time
 import math
 from pathlib import Path
 from PIL import Image
-import cv2
 import torch
-import easyocr
 from ultralytics import YOLO
 
 # ========================================================================================
@@ -54,7 +52,7 @@ if GEMINI_API_KEYS:
             gemini_clients.append({"client": c, "key_id": k[:8] + "...", "last_used": 0.0})
         print(f"🔑 Initialized {len(gemini_clients)} independent Gemini API project clients.")
     except Exception as e:
-        print(f"⚠️  Google GenAI SDK error: {e}. Falling back to EasyOCR.")
+        print(f"⚠️  Google GenAI SDK error: {e}. Text will not be transcribed.")
 
 current_key_idx = 0
 
@@ -62,7 +60,6 @@ current_key_idx = 0
 # 3. Hardware Auto-Detection (NVIDIA CUDA GPU vs. AMD / CPU)
 # ========================================================================================
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
-use_gpu_ocr = True if torch.cuda.is_available() else False
 
 print("=" * 70)
 print("🚀 IndicDLP Broadsheet Auto-Annotator & OCR Engine")
@@ -87,10 +84,6 @@ if not weights_path:
 
 print(f"📦 Loading YOLO layout detector from: {weights_path}")
 yolo_model = YOLO(str(weights_path))
-
-print("⚡ Initializing Bengali EasyOCR reader...")
-reader = easyocr.Reader(['bn'], gpu=use_gpu_ocr, verbose=False)
-print("✓ EasyOCR reader ready!")
 
 # ========================================================================================
 # 4. Official 5-Class Taxonomy & Header / Furniture Exclusion
@@ -189,14 +182,6 @@ def ocr_with_gemini(crop_img: Image.Image) -> str:
 
     return ""
 
-def ocr_with_easyocr(crop_cv2) -> str:
-    try:
-        results = reader.readtext(crop_cv2)
-        lines = [r[1].strip() for r in results if len(r[1].strip()) > 0]
-        return "\n".join(lines).strip()
-    except Exception:
-        return ""
-
 # ========================================================================================
 # 6. Main Execution Pipeline
 # ========================================================================================
@@ -273,13 +258,6 @@ def main():
                 # Use Gemini if clients configured
                 if gemini_clients:
                     ocr_text = ocr_with_gemini(crop_pil)
-
-                # Fallback to local EasyOCR
-                if not ocr_text:
-                    cv_img = cv2.imread(fpath)
-                    crop_cv2 = cv_img[max(0, int(y1)):min(H, int(y2)), max(0, int(x1)):min(W, int(x2))]
-                    if crop_cv2 is not None and crop_cv2.size > 0:
-                        ocr_text = ocr_with_easyocr(crop_cv2)
 
                 if not ocr_text:
                     ocr_text = f"[{std_label}]"

@@ -7,7 +7,7 @@ This guide walks you through setting up and running the automated layout annotat
 ## ⚡ 1. Automatic Hardware Detection (GPU & CPU)
 
 The pipeline **automatically detects your available hardware**:
-* **NVIDIA GPU (CUDA):** If an NVIDIA GPU is detected, PyTorch loads YOLO and EasyOCR directly into GPU VRAM for ultra-fast processing (~1.2s per broadsheet).
+* **NVIDIA GPU (CUDA):** If an NVIDIA GPU is detected, PyTorch loads the YOLO layout model directly into GPU VRAM for ultra-fast processing (~1.2s per broadsheet).
 * **CPU / AMD Graphics:** If no CUDA GPU is detected (e.g. Intel/AMD laptops), the pipeline **automatically falls back to multi-threaded CPU mode**:
   ```python
   device = "cuda:0" if torch.cuda.is_available() else "cpu"
@@ -36,7 +36,7 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 pip install torch torchvision
 
 # 3. Install core libraries
-pip install ultralytics easyocr google-genai Pillow numpy scikit-learn matplotlib
+pip install ultralytics google-genai Pillow numpy scikit-learn matplotlib
 ```
 
 ---
