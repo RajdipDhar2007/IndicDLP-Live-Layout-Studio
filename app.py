@@ -22,6 +22,7 @@ import urllib.request
 import uuid
 import zipfile
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from dataclasses import dataclass
 from html import escape
@@ -878,6 +879,20 @@ def get_gemini_client(api_key: str):
         timeout=60_000, retry_options=types.HttpRetryOptions(attempts=1)))
 
 
+def gemini_call(client, image_jpeg: bytes, region_label: str, model_name: str) -> str:
+    """One Gemini request for one cropped region. No Streamlit calls, so it can run in a worker thread."""
+    from google.genai import types
+    response = client.models.generate_content(
+        model=model_name,
+        contents=[GEMINI_OCR_PROMPT.format(region_label=region_label),
+                  types.Part.from_bytes(data=image_jpeg, mime_type="image/jpeg")],
+        config=types.GenerateContentConfig(
+            response_mime_type="text/plain", max_output_tokens=2048,
+            thinking_config=types.ThinkingConfig(thinking_level="low")),  # type: ignore
+    )
+    return (response.text or "").strip()
+
+
 def gemini_ocr(image_jpeg: bytes, region_label: str, model_name: str) -> str:
     """One Gemini request for a single cropped region; logs timing to the terminal."""
     started = time.perf_counter()
@@ -888,18 +903,9 @@ def gemini_ocr(image_jpeg: bytes, region_label: str, model_name: str) -> str:
     print(f"[Gemini OCR] START {stamp()} | model={model_name} | class={region_label} | crop_bytes={len(image_jpeg)}", flush=True)
     api_key = gemini_key()
     try:
-        from google.genai import types
         if not api_key:
             raise RuntimeError(T("No Gemini API key. Enter it in the sidebar, or set GEMINI_API_KEY / GOOGLE_GEMINI_API_KEY in .env."))
-        response = get_gemini_client(api_key).models.generate_content(
-            model=model_name,
-            contents=[GEMINI_OCR_PROMPT.format(region_label=region_label),
-                      types.Part.from_bytes(data=image_jpeg, mime_type="image/jpeg")],
-            config=types.GenerateContentConfig(
-                response_mime_type="text/plain", max_output_tokens=2048,
-                thinking_config=types.ThinkingConfig(thinking_level="low")),  # type: ignore
-        )
-        text = (response.text or "").strip()
+        text = gemini_call(get_gemini_client(api_key), image_jpeg, region_label, model_name)
         print(f"[Gemini OCR] SUCCESS {stamp()} | model={model_name} | class={region_label} "
               f"| elapsed={time.perf_counter() - started:.2f}s | chars={len(text)}", flush=True)
         return text
@@ -914,18 +920,12 @@ def region_record_key(result_id: str, model_key: str, index: int) -> str:
     return f"{result_id}:{model_key}:{index}"
 
 
-def ensure_region_ocr(result_id: str, model_key: str, index: int, detection: dict,
-                      bounds: tuple[int, int, int, int], crop: Image.Image, gemini_model: str | None = None) -> dict:
-    """Attempt OCR once for this detection in this result set and keep its full record."""
-    record_key = region_record_key(result_id, model_key, index)
-    records = st.session_state.setdefault("region_records", {})
-    record = records.get(record_key)
-    if record is not None and record.get("ocr", {}).get("attempted"):
-        return record
+def new_region_record(model_key: str, index: int, detection: dict, bounds: tuple[int, int, int, int], crop: Image.Image,
+                      model_name: str) -> tuple[dict, bytes]:
+    """The stored record of one region (class, box, crop size, OCR state) and the JPEG that is sent to Gemini."""
     x1, y1, x2, y2 = bounds
     buf = io.BytesIO()
     crop.convert("RGB").save(buf, format="JPEG", quality=88, optimize=True)
-    model_name = gemini_model or GEMINI_OCR_MODELS[st.session_state.get("gemini_model", next(iter(GEMINI_OCR_MODELS)))]
     record = {
         "region_id": f"{model_key}-{index + 1}", "model": model_key, "index": index,
         "class": detection["label"], "source_class": detection.get("source_label", detection["label"]),
@@ -933,14 +933,142 @@ def ensure_region_ocr(result_id: str, model_key: str, index: int, detection: dic
         "crop": {"width_px": crop.width, "height_px": crop.height, "format": "image/jpeg"},
         "ocr": {"attempted": True, "status": "pending", "model": model_name, "text": "", "error": None},
     }
+    return record, buf.getvalue()
+
+
+def ensure_region_ocr(result_id: str, model_key: str, index: int, detection: dict,
+                      bounds: tuple[int, int, int, int], crop: Image.Image, gemini_model: str | None = None,
+                      force: bool = False) -> dict:
+    """Read this detection once and keep its full record; `force` reads it again and replaces the record (Redo OCR)."""
+    record_key = region_record_key(result_id, model_key, index)
+    records = st.session_state.setdefault("region_records", {})
+    record = records.get(record_key)
+    if not force and record is not None and record.get("ocr", {}).get("attempted"):
+        return record
+    model_name = gemini_model or GEMINI_OCR_MODELS[st.session_state.get("gemini_model", next(iter(GEMINI_OCR_MODELS)))]
+    record, jpeg = new_region_record(model_key, index, detection, bounds, crop, model_name)
     records[record_key] = record
     t0 = time.perf_counter()
     try:
-        record["ocr"].update(status="complete", text=gemini_ocr(buf.getvalue(), detection["label"], model_name))
+        record["ocr"].update(status="complete", text=gemini_ocr(jpeg, detection["label"], model_name))
     except Exception as exc:
         record["ocr"].update(status="error", error=str(exc))
     record["ocr"]["elapsed_s"] = round(time.perf_counter() - t0, 3)
     return record
+
+
+# ---- live OCR of the fused regions: progress bar + annotated page with a tick per finished box ----
+OCR_WORKERS = 4  # parallel Gemini requests while a whole page is read
+
+
+def live_canvas(page: Image.Image, dets: list[dict]) -> tuple[Image.Image, float]:
+    """The page scaled for the screen with every region box drawn on it (colour = class)."""
+    img, scale = fit(page, 900)
+    base = img.convert("RGBA")
+    overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(overlay)
+    for det in dets:
+        col = rgb(color_of(det))
+        x1, y1, x2, y2 = [v * scale for v in det["box"]]
+        d.rectangle([x1, y1, x2, y2], fill=col + (40,), outline=col + (255,), width=2)
+    return Image.alpha_composite(base, overlay).convert("RGB"), scale
+
+
+def draw_ocr_mark(canvas: Image.Image, det: dict, scale: float, ok: bool) -> None:
+    """Green tick (text read) or red cross (could not be read) in the top-right corner of a region box."""
+    d = ImageDraw.Draw(canvas)
+    x1, y1, x2, y2 = [v * scale for v in det["box"]]
+    r = max(9, int(canvas.width / 70))
+    cx = min(max(x2 - r - 2, x1 + r), canvas.width - r - 2)
+    cy = min(y1 + r + 2, canvas.height - r - 2)
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(22, 163, 74) if ok else (220, 38, 38), outline=(255, 255, 255), width=2)
+    w = max(2, r // 4)
+    if ok:
+        d.line([(cx - .5 * r, cy + .05 * r), (cx - .12 * r, cy + .45 * r), (cx + .55 * r, cy - .45 * r)], fill="white", width=w)
+    else:
+        k = .38 * r
+        d.line([(cx - k, cy - k), (cx + k, cy + k)], fill="white", width=w)
+        d.line([(cx - k, cy + k), (cx + k, cy - k)], fill="white", width=w)
+
+
+def _read_region(client, jpeg: bytes, label: str, model_name: str) -> tuple[str, str | None, float]:
+    """Worker thread: one Gemini request for one region (retried after rate-limit and overload answers).
+    Returns (text, error or None, seconds). It must not touch Streamlit."""
+    t0, last = time.perf_counter(), ""
+    for attempt in range(4):
+        try:
+            return gemini_call(client, jpeg, label, model_name), None, time.perf_counter() - t0
+        except Exception as exc:
+            last = f"{type(exc).__name__}: {exc}"
+            if not any(k in last for k in ("429", "503", "RESOURCE_EXHAUSTED", "UNAVAILABLE", "overloaded")):
+                break
+            time.sleep(2 ** (attempt + 1))
+    return "", last, time.perf_counter() - t0
+
+
+def run_live_ocr(slot, page: Image.Image, dets: list[dict], result_id: str, model_key: str, force: bool = False) -> None:
+    """Reads every text region with Gemini, one request per region, and shows the progress live inside `slot`:
+    a bar that fills up and the annotated page, where a green tick appears over each box as soon as its text is back.
+    Regions that are already read are skipped (so an interrupted run resumes); `force` reads all of them again."""
+    api_key = gemini_key()
+    records = st.session_state.setdefault("region_records", {})
+    model_name = GEMINI_OCR_MODELS[st.session_state.get("gemini_model", next(iter(GEMINI_OCR_MODELS)))]
+    for d in dets:
+        d.setdefault("text", "")
+    canvas, scale = live_canvas(page, dets)
+    done = errors = 0
+    jobs = []
+    for i, d in enumerate(dets):
+        if d["label"] in NON_TEXT:
+            continue
+        rec = records.get(region_record_key(result_id, model_key, i))
+        if not force and (rec or {}).get("ocr", {}).get("status") == "complete":
+            draw_ocr_mark(canvas, d, scale, True)
+            done += 1
+            continue
+        bounds = crop_bounds(page, d["box"])
+        if bounds is not None:
+            jobs.append((i, d, bounds, page.crop(bounds)))
+    total = done + len(jobs)
+    if not jobs:
+        return
+    with slot:
+        bar_ph, canvas_ph = st.empty(), st.empty()
+
+    def show() -> None:
+        bar_ph.html(progress_html(done / max(total, 1), T("Reading text: {done} of {total} regions", done=done, total=total)))
+        canvas_ph.image(canvas, width="stretch", output_format="JPEG")
+
+    show()
+    pool = ThreadPoolExecutor(max_workers=OCR_WORKERS)
+    try:
+        client = get_gemini_client(api_key)
+        futures = {}
+        for i, d, bounds, crop in jobs:
+            rec, jpeg = new_region_record(model_key, i, d, bounds, crop, model_name)
+            records[region_record_key(result_id, model_key, i)] = rec
+            futures[pool.submit(_read_region, client, jpeg, d["label"], model_name)] = (i, d, rec)
+        for fut in as_completed(futures):  # in the order the answers arrive, so the ticks appear one by one
+            i, d, rec = futures[fut]
+            text, err, secs = fut.result()
+            if err:
+                rec["ocr"].update(status="error", error=T("Gemini OCR failed: {message}", message=err.replace(api_key, "[hidden]")))
+                errors += 1
+            else:
+                rec["ocr"].update(status="complete", text=text, error=None)
+                d["text"] = text
+            rec["ocr"]["elapsed_s"] = round(secs, 3)
+            st.session_state.pop(f"ocr_text_{region_record_key(result_id, model_key, i)}", None)  # show the new text when the box is opened
+            draw_ocr_mark(canvas, d, scale, not err)
+            done += 1
+            show()
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+    bar_ph.empty()
+    canvas_ph.empty()
+    if errors:
+        with slot:
+            st.warning(T("{n} regions could not be read. Click a box and press Redo OCR to try again.", n=errors))
 
 
 def show_detection_crop(**kw) -> None:
@@ -1003,16 +1131,21 @@ def _show_detection_crop(model_title: str, number: int, detection: dict, bounds,
             if st.button(T("Run Gemini OCR"), key=f"run_ocr_{record_key}", type="primary"):
                 with st.spinner(T("Waiting for {model}", model=selected_model)):
                     record = ensure_region_ocr(result_id, model_key, detection_index, detection, bounds, crop, selected_model)
+        elif st.button(T("🔁 Redo OCR"), key=f"redo_ocr_{record_key}",
+                       help=T("Reads this region again with the selected model and replaces the text below, including any edits you made.")):
+            with st.spinner(T("Waiting for {model}", model=selected_model)):
+                record = ensure_region_ocr(result_id, model_key, detection_index, detection, bounds, crop, selected_model, force=True)
+            st.session_state[ocr_text_key] = record["ocr"].get("text", "")  # before the text box is created in this run
         if record is not None:
             if record["ocr"]["status"] == "error":
                 st.error(record["ocr"]["error"])
             elif record["ocr"].get("model") != selected_model:
-                st.info(T("This region was already processed with {model}; it will not be sent again.", model=record['ocr'].get('model')))
+                st.info(T("This region was read with {model}. Press Redo OCR to read it again with the selected model.", model=record['ocr'].get('model')))
             st.session_state.setdefault(ocr_text_key, record["ocr"].get("text", ""))
             st.text_area(T("OCR transcription (editable)"), key=ocr_text_key, height=180)
             record["ocr"]["text"] = st.session_state[ocr_text_key]
             detection["text"] = record["ocr"]["text"]
-            st.caption(T("Model used: {model}. This region is sent to Gemini once per detection.", model=record['ocr'].get('model')))
+            st.caption(T("Model used: {model}. Edit the text above if needed; Redo OCR reads the region again.", model=record['ocr'].get('model')))
         elif detection.get("text"):
             st.text_area(T("Text read by the page-level OCR"), detection["text"], height=140, disabled=True,
                          key=f"page_ocr_{record_key}")
@@ -1310,7 +1443,9 @@ def summary(image_name: str, lang: str) -> None:
             done, errors, total = transcribe_regions(results, page, result_id, T("Preparing OCR"))
             st.success(T("Transcription finished: {done} completed, {errors} errors, {total} eligible regions.",
                          done=done, errors=errors, total=total))
-    tabs = st.tabs([f"{FUSION.icon if k == 'fusion' else MODELS[k].icon} {title_of(k)}" for k in keys])
+    tab_labels = [f"{FUSION.icon if k == 'fusion' else MODELS[k].icon} {title_of(k)}" for k in keys]
+    # The Ensemble Fusion tab opens first: its text is read live there (progress bar + ticks on the annotated page).
+    tabs = st.tabs(tab_labels, default=tab_labels[keys.index("fusion")] if "fusion" in keys else None)
     context_key = hashlib.sha1(repr((st.session_state.get("sig"), result_id)).encode("utf-8")).hexdigest()[:12]
     click_events = st.session_state.setdefault("annotation_click_ids", {})
     page_image_b64 = b64_jpeg(page, 85)
@@ -1318,29 +1453,37 @@ def summary(image_name: str, lang: str) -> None:
         r = results[key]
         with tab:
             ocr_on = st.session_state.get("ocr_on", True)
+            live_slot = st.container()  # progress bar and annotated page while the fused regions are being read
             if ocr_on and key == "fusion" and not r.get("auto_ocr"):  # Ensemble Fusion is read automatically, once
                 if not gemini_key():
                     st.info(T("Add a Gemini API key in the sidebar to read the text of the fused regions."))
                 else:
-                    r["auto_ocr"] = True
-                    with st.spinner(T("Reading text in the fused regions (Gemini)…")):
-                        try:
-                            ocr_page(page, r["dets"])
-                        except Exception as e:
-                            st.warning(T("Automatic OCR failed: {err}", err=e))
-                            for d in r["dets"]:
-                                d.pop("text", None)
+                    try:
+                        run_live_ocr(live_slot, page, r["dets"], result_id, key)
+                        r["auto_ocr"] = True
+                    except Exception as e:
+                        st.warning(T("Automatic OCR failed: {err}", err=e))
             has_text = any("text" in d for d in r["dets"])
             if ocr_on and st.button(T("📝 Re-run with Gemini (Bengali + English)" if has_text else "📝 Extract text with Gemini (Bengali + English)"),
-                                    key=f"ocr_{key}"):
-                bar = st.progress(0.0, text=T("Starting Gemini…"))
-                try:
-                    ocr_page(page, r["dets"], lambda p, t: bar.progress(p, text=t))
-                except (PermissionError, RuntimeError) as e:
-                    st.error(str(e))
-                bar.empty()
+                                    key=f"ocr_{key}", help=T("Reads every text region again and replaces all texts, including your edits.")):
+                if key == "fusion":
+                    if gemini_key():
+                        try:
+                            run_live_ocr(live_slot, page, r["dets"], result_id, key, force=True)
+                            r["auto_ocr"] = True
+                        except Exception as e:
+                            st.warning(T("Automatic OCR failed: {err}", err=e))
+                    else:
+                        st.error(T("No Gemini API key. Enter it in the sidebar or set GEMINI_API_KEY."))
+                else:
+                    bar = st.progress(0.0, text=T("Starting Gemini…"))
+                    try:
+                        ocr_page(page, r["dets"], lambda p, t: bar.progress(p, text=t))
+                    except (PermissionError, RuntimeError) as e:
+                        st.error(str(e))
+                    bar.empty()
                 has_text = any("text" in d for d in r["dets"])
-            st.caption(T("💡 Click any box to open its cutout: coordinates, PNG download, ESPCN x2 upscale and Gemini OCR." if ocr_on
+            st.caption(T("💡 Click any box to open its cutout: coordinates, PNG download, ESPCN x2 upscale, and its text, which you can edit or read again with Redo OCR. A green ✓ marks a box whose text has been read." if ocr_on
                          else "💡 Click any box to open its cutout: coordinates, PNG download, ESPCN x2 upscale. OCR is switched off in the sidebar."))
             component_key = f"annotations_{context_key}_{key}"
             click = annotation_view(

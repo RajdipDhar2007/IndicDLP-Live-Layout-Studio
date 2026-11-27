@@ -200,11 +200,7 @@ UI_BN: dict[str, str] = {
         "নির্বাচিত মডেল: {model}। সাইডবারে বদলানো যাবে; প্রস্তুত হলে OCR চালান।",
     "Run Gemini OCR": "Gemini OCR চালান",
     "Waiting for {model}": "{model}-এর উত্তরের অপেক্ষা",
-    "This region was already processed with {model}; it will not be sent again.":
-        "এই অঞ্চলটি ইতিমধ্যে {model} দিয়ে প্রক্রিয়া করা হয়েছে; আবার পাঠানো হবে না।",
     "OCR transcription (editable)": "OCR লিখিত রূপ (সম্পাদনাযোগ্য)",
-    "Model used: {model}. This region is sent to Gemini once per detection.":
-        "ব্যবহৃত মডেল: {model}। প্রতিটি শনাক্তকরণের অঞ্চল Gemini-তে একবারই পাঠানো হয়।",
     "Text read by the page-level OCR": "পৃষ্ঠা-স্তরের OCR যে লেখা পড়েছে",
     "Processed {pos} of {n} text regions": "{n}টি লেখার অঞ্চলের মধ্যে {pos}টি প্রক্রিয়া হয়েছে",
     # results tables
@@ -241,13 +237,10 @@ UI_BN: dict[str, str] = {
     "Preparing OCR": "OCR প্রস্তুত হচ্ছে",
     "Transcription finished: {done} completed, {errors} errors, {total} eligible regions.":
         "লেখা পড়া শেষ: {total}টি যোগ্য অঞ্চলের মধ্যে {done}টি সম্পন্ন, {errors}টি ত্রুটি।",
-    "Reading text in the fused regions (Gemini)…": "ফিউজ করা অঞ্চলের লেখা পড়া হচ্ছে (Gemini)…",
     "Automatic OCR failed: {err}": "স্বয়ংক্রিয় OCR ব্যর্থ হয়েছে: {err}",
     "📝 Re-run with Gemini (Bengali + English)": "📝 Gemini দিয়ে আবার চালান (বাংলা + ইংরেজি)",
     "📝 Extract text with Gemini (Bengali + English)": "📝 Gemini দিয়ে লেখা বের করুন (বাংলা + ইংরেজি)",
     "Starting Gemini…": "Gemini শুরু হচ্ছে…",
-    "💡 Click any box to open its cutout: coordinates, PNG download, ESPCN x2 upscale and Gemini OCR.":
-        "💡 যেকোনো বাক্সে ক্লিক করে তার কাটআউট খুলুন: স্থানাঙ্ক, PNG ডাউনলোড, ESPCN x2 বড় করা এবং Gemini OCR।",
     "💡 Click any box to open its cutout: coordinates, PNG download, ESPCN x2 upscale. OCR is switched off in the sidebar.":
         "💡 যেকোনো বাক্সে ক্লিক করে তার কাটআউট খুলুন: স্থানাঙ্ক, PNG ডাউনলোড, ESPCN x2 বড় করা। সাইডবারে OCR বন্ধ আছে।",
     "⬇ Annotated image (PNG)": "⬇ চিহ্নিত ছবি (PNG)",
@@ -272,6 +265,18 @@ UI_BN: dict[str, str] = {
     "Gemini could not read the page ({last}). Daily free-tier limits may be used up; try again later.":
         "Gemini পৃষ্ঠাটি পড়তে পারেনি ({last})। দৈনিক বিনামূল্যের সীমা শেষ হয়ে থাকতে পারে; পরে আবার চেষ্টা করুন।",
     "Gemini OCR failed: {message}": "Gemini OCR ব্যর্থ হয়েছে: {message}",
+    "Reading text: {done} of {total} regions": "লেখা পড়া হচ্ছে: {total}টির মধ্যে {done}টি অঞ্চল",
+    "{n} regions could not be read. Click a box and press Redo OCR to try again.": "{n}টি অঞ্চল পড়া যায়নি। বাক্সে ক্লিক করে “আবার OCR করুন” চাপুন।",
+    "🔁 Redo OCR": "🔁 আবার OCR করুন",
+    "Reads this region again with the selected model and replaces the text below, including any edits you made.":
+        "নির্বাচিত মডেল দিয়ে এই অঞ্চলটি আবার পড়ে এবং আপনার করা সম্পাদনাসহ নিচের লেখা বদলে দেয়।",
+    "This region was read with {model}. Press Redo OCR to read it again with the selected model.":
+        "এই অঞ্চলটি {model} দিয়ে পড়া হয়েছে। নির্বাচিত মডেল দিয়ে আবার পড়তে “আবার OCR করুন” চাপুন।",
+    "Model used: {model}. Edit the text above if needed; Redo OCR reads the region again.":
+        "ব্যবহৃত মডেল: {model}। দরকার হলে ওপরের লেখা সম্পাদনা করুন; “আবার OCR করুন” অঞ্চলটি আবার পড়ে।",
+    "Reads every text region again and replaces all texts, including your edits.": "প্রতিটি লেখার অঞ্চল আবার পড়ে এবং আপনার সম্পাদনাসহ সব লেখা বদলে দেয়।",
+    "💡 Click any box to open its cutout: coordinates, PNG download, ESPCN x2 upscale, and its text, which you can edit or read again with Redo OCR. A green ✓ marks a box whose text has been read.":
+        "💡 যেকোনো বাক্সে ক্লিক করে তার কাটআউট খুলুন: স্থানাঙ্ক, PNG ডাউনলোড, ESPCN x2 বড় করা, এবং তার লেখা, যা আপনি সম্পাদনা করতে বা “আবার OCR করুন” দিয়ে আবার পড়াতে পারেন। সবুজ ✓ চিহ্ন মানে বাক্সের লেখা পড়া হয়ে গেছে।",
     # legend groups
     "Headlines": "প্রধান শিরোনাম", "Titles": "শিরোনাম ও অধ্যায়", "Body text": "মূল লেখা", "Lists": "তালিকা",
     "Figures & tables": "চিত্র ও সারণি", "Page furniture": "পৃষ্ঠার কাঠামো", "Exam parts": "পরীক্ষার অংশ", "Other": "অন্যান্য",
