@@ -961,6 +961,19 @@ def translate_text(text: str) -> tuple[str, str | None]:
     return english, (T("Translation failed: {message}", message=_scrub(err, [key])) if err else None)
 
 
+def translate_record(record: dict, text: str | None = None) -> str:
+    """Main thread: translates the text of a region record, stores the translation, its error and its timing
+    (the translation benchmark table is built from these fields), and returns the English text."""
+    text = record["ocr"]["text"] if text is None else text
+    t0 = time.perf_counter()
+    english, err = translate_text(text) if translate_key() else ("", None)
+    record["ocr"].update(translation=english, translation_error=err)
+    if translate_key() and text.strip():
+        record["ocr"].update(translation_elapsed_s=round(time.perf_counter() - t0, 3), translation_chars=len(text.strip()),
+                             translation_model=GEMINI_OCR_MODELS[st.session_state.get("translate_model", next(iter(GEMINI_OCR_MODELS)))])
+    return english
+
+
 def translate_dets(dets: list[dict]) -> None:
     """Main thread: translates every region that has text but no translation yet (the regions are sent four at a time)."""
     key = translate_key()
@@ -1037,8 +1050,7 @@ def ensure_region_ocr(result_id: str, model_key: str, index: int, detection: dic
         record["ocr"].update(status="error", error=str(exc))
     record["ocr"]["elapsed_s"] = round(time.perf_counter() - t0, 3)
     if record["ocr"]["status"] == "complete":
-        english, err = translate_text(record["ocr"]["text"]) if translate_key() else ("", None)
-        record["ocr"].update(translation=english, translation_error=err)
+        english = translate_record(record)
         detection["text"], detection["translation"] = record["ocr"]["text"], english
     return record
 
@@ -1097,16 +1109,18 @@ def _with_retries(gate: RateGate, call, note: dict | None = None) -> tuple[str, 
 
 
 def _read_region(client, jpeg: bytes, label: str, model_name: str, tr_client=None,
-                 tr_model: str = "", note: dict | None = None) -> tuple[str, str | None, float, str, str | None]:
+                 tr_model: str = "", note: dict | None = None) -> tuple[str, str | None, float, str, str | None, float]:
     """Worker thread: one Gemini request for the text of one region and, when a translation client is given, one more
     request that translates the text into English. Returns (text, error, seconds, translation, translation error)."""
     t0 = time.perf_counter()
     text, err = _with_retries(OCR_GATE, lambda: gemini_call(client, jpeg, label, model_name), note)
     secs = time.perf_counter() - t0
-    english, tr_err = "", None
+    english, tr_err, tr_secs = "", None, 0.0
     if not err and text.strip() and tr_client is not None:
+        t1 = time.perf_counter()
         english, tr_err = _with_retries(TRANSLATE_GATE, lambda: gemini_translate(tr_client, text, tr_model), note)
-    return text, err, secs, english, tr_err
+        tr_secs = time.perf_counter() - t1
+    return text, err, secs, english, tr_err, tr_secs
 
 
 class OcrJob:
@@ -1115,15 +1129,16 @@ class OcrJob:
 
     def __init__(self, secrets: list[str], base_done: int, total: int) -> None:
         self.lock = threading.Lock()
-        self.arrived: list[tuple[int, str, str | None, float, str, str | None]] = []
+        self.arrived: list[tuple[int, str, str | None, float, str, str | None, float]] = []
         self.secrets, self.base_done, self.total, self.applied = secrets, base_done, total, 0
+        self.tr_model = ""
         self.note = {"text": "", "at": 0.0}  # why the workers are waiting, if Gemini is busy
 
-    def arrive(self, index: int, outcome: tuple[str, str | None, float, str, str | None]) -> None:
+    def arrive(self, index: int, outcome: tuple[str, str | None, float, str, str | None, float]) -> None:
         with self.lock:
             self.arrived.append((index, *outcome))
 
-    def take(self) -> list[tuple[int, str, str | None, float, str, str | None]]:
+    def take(self) -> list[tuple[int, str, str | None, float, str, str | None, float]]:
         with self.lock:
             got, self.arrived = self.arrived, []
         return got
@@ -1160,6 +1175,7 @@ def start_ocr_job(page: Image.Image, dets: list[dict], result_id: str, model_key
     tr_client = get_gemini_client(tr_key) if tr_key else None
     tr_model = GEMINI_OCR_MODELS[st.session_state.get("translate_model", next(iter(GEMINI_OCR_MODELS)))]
     job = OcrJob([api_key, tr_key], done_before, len(jobs))
+    job.tr_model = tr_model
     st.session_state.setdefault("ocr_jobs", {})[f"{result_id}:{model_key}"] = job
     pool = ThreadPoolExecutor(max_workers=OCR_WORKERS)
     for i, d, bounds, crop in jobs:
@@ -1174,7 +1190,7 @@ def start_ocr_job(page: Image.Image, dets: list[dict], result_id: str, model_key
 def apply_ocr_job(job: OcrJob, dets: list[dict], result_id: str, model_key: str) -> None:
     """Main thread: moves the answers that have arrived into the region records and the detections."""
     records = st.session_state.get("region_records", {})
-    for i, text, err, secs, english, tr_err in job.take():
+    for i, text, err, secs, english, tr_err, tr_secs in job.take():
         job.applied += 1
         rkey = region_record_key(result_id, model_key, i)
         rec = records.get(rkey)
@@ -1186,6 +1202,8 @@ def apply_ocr_job(job: OcrJob, dets: list[dict], result_id: str, model_key: str)
             rec["ocr"].update(status="complete", text=text, error=None, translation=english,
                               translation_error=T("Translation failed: {message}", message=_scrub(tr_err, job.secrets)) if tr_err else None)
             dets[i]["text"], dets[i]["translation"] = text, english
+            if tr_secs:
+                rec["ocr"].update(translation_elapsed_s=round(tr_secs, 3), translation_chars=len(text.strip()), translation_model=job.tr_model)
         rec["ocr"]["elapsed_s"] = round(secs, 3)
         st.session_state.pop(f"ocr_text_{rkey}", None)  # show the new text when the box is opened
         st.session_state.pop(f"ocr_en_{rkey}", None)
@@ -1338,9 +1356,8 @@ def _show_detection_crop(model_title: str, number: int, detection: dict, bounds,
                     if st.button(T("🌐 Translate to English"), key=f"translate_{record_key}",
                                  help=T("Translates the OCR text above, with your edits, into English and replaces the translation below.")):
                         with st.spinner(T("Translating…")):
-                            english, err = translate_text(st.session_state[ocr_text_key])
+                            english = translate_record(record, st.session_state[ocr_text_key])
                         st.session_state[en_key] = english
-                        record["ocr"]["translation_error"] = err
                     if record["ocr"].get("translation_error"):
                         st.error(record["ocr"]["translation_error"])
                     st.session_state.setdefault(en_key, record["ocr"].get("translation", ""))
@@ -1601,6 +1618,27 @@ def ocr_benchmark_rows() -> list[dict]:
     return rows
 
 
+def translation_benchmark_rows() -> list[dict]:
+    """Translation benchmark: Gemini timings and sizes measured live from this session's translations (per model)."""
+    by_model: dict[str, list[dict]] = {}
+    for rec in st.session_state.get("region_records", {}).values():
+        o = rec.get("ocr", {})
+        if "translation_elapsed_s" in o:
+            by_model.setdefault(o.get("translation_model") or "?", []).append(o)
+    rows = []
+    for model, outs in by_model.items():
+        ok = [o for o in outs if o.get("translation") and not o.get("translation_error")]
+        times = [o["translation_elapsed_s"] * 1000 for o in ok]
+        rows.append({T("Engine"): T("Gemini {model} (cloud, one request per region)", model=model),
+                     T("Regions translated"): len(ok),
+                     T("Avg time / region (ms)"): round(statistics.mean(times)) if times else None,
+                     T("Median time / region (ms)"): round(statistics.median(times)) if times else None,
+                     T("Avg characters in"): round(statistics.mean(o["translation_chars"] for o in ok)) if ok else None,
+                     T("Avg words out"): round(statistics.mean(len(o["translation"].split()) for o in ok), 1) if ok else None,
+                     T("Errors"): len(outs) - len(ok), T("Source"): T("measured in this session")})
+    return rows
+
+
 def summary(image_name: str, lang: str) -> None:
     results = st.session_state.get("result")
     page = st.session_state.get("shown_img")
@@ -1627,6 +1665,15 @@ def summary(image_name: str, lang: str) -> None:
         st.dataframe(ocr_rows, width="stretch", hide_index=True)
     else:
         st.info(T("No OCR timings yet. Run Gemini OCR on a region to see its speed here."))
+
+    st.markdown(T("#### Translation benchmark"))
+    st.caption(T("Bengali to English by Gemini, measured live in this session. The time includes waiting while Gemini limits requests. "
+                 "There are no human reference translations for these pages, so the quality of the English is not scored here; read it in the box dialog."))
+    translation_rows = translation_benchmark_rows()
+    if translation_rows:
+        st.dataframe(translation_rows, width="stretch", hide_index=True)
+    else:
+        st.info(T("No translation timings yet. Read some regions with OCR and a translation key to see the speed here."))
 
     counts: dict[str, dict[str, int]] = {}
     for key, r in results.items():
