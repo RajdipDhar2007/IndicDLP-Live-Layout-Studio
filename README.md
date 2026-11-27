@@ -37,7 +37,7 @@ For Bengali and English pages it is hard, because the Bengali script is complex,
 The public IndicDLP dataset (119,806 pages, 42 region classes) and its fine-tuned detectors solve the modelling part, but they are released only as research checkpoints with no user interface.
 This project builds a web application, the Live Layout Studio, that puts two of these detectors (YOLOv10x and DocLayout-YOLO) behind one interface.
 It adds multi-scale inference and Weighted Boxes Fusion to merge several passes or models into one prediction.
-It animates detection region by region, is available in English and Bengali (interface and 42 class names), and reads the text of each region with Gemini OCR.
+It animates detection region by region, is available in English and Bengali (interface and 42 class names), reads the text of each region with Gemini OCR, and writes an English translation of it below the text.
 Multi-page PDFs can be processed as a batch, and results export as PNG, JSON, COCO JSON, PAGE-XML, HTML and text in reading order.
 The published checkpoints (57.7 and 54.5 mAP[50:95]) are used as released, and one of them is also fine-tuned on annotated Bengali newspaper pages.
 On 50 held-out, human-corrected Bengali newspaper pages the ensemble reached 97.9 mAP[50:95] against 89.8 and 90.3 for the two boosted single models, at about 0.37 s per page on a GPU. These figures are circular (the annotators corrected the ensemble's own output, Section 5.4), so they show agreement with that output rather than independent accuracy.
@@ -61,10 +61,11 @@ India has a very large body of Bengali and other Indic print, much of it archiva
 |---|---|
 | Detectors | YOLOv10x (Ultralytics) and DocLayout-YOLO, single-stage object detectors, using the IndicDLP-fine-tuned checkpoints |
 | Fusion | Weighted Boxes Fusion (`ensemble-boxes`) |
-| Text reading (OCR) | Google Gemini (cloud) |
+| Text reading (OCR) | Google Gemini (cloud), one request per region |
+| Bengali to English translation | Google Gemini (cloud), a second API key and model setting, one request per region |
 | Super-resolution | ESPCN x2 (OpenCV) to sharpen small cutouts |
 | PDF input | PyMuPDF renders each PDF page to an image |
-| Reading order and exports | Recursive XY-cut; COCO JSON, PAGE-XML and HTML writers; per-class AP (`detmetrics.py`) |
+| Reading order and exports | Recursive XY-cut; COCO JSON, PAGE-XML and HTML writers (text and English translation); per-class AP (`detmetrics.py`) |
 | Interface | Streamlit with a custom JavaScript component for clickable boxes |
 | Runtime | Python, PyTorch (CUDA or CPU), Pillow, NumPy, OpenCV |
 
@@ -76,7 +77,7 @@ India has a very large body of Bengali and other Indic print, much of it archiva
 - **Weighted Boxes Fusion** (Solovyev et al., 2021): instead of discarding overlapping boxes as NMS does, it averages the coordinates of overlapping boxes of the same class, weighted by confidence.
 - **Sarvam Akshar** (Sarvam AI): an example that links extracted text to labelled blocks on an *Amrita Bazar Patrika* page. It was the reference for an interface where a reader compares a region and its text with the source image.
 - **Label Studio** (HumanSignal): the annotation tool in which the group drew and reviewed the region boxes (rectangle labels with an editable transcription per region).
-- **Gemini API** (Google): image understanding, used for the region-level Bengali transcription.
+- **Gemini API** (Google): image understanding, used for the region-level Bengali transcription, and text generation, used for the Bengali to English translation of each transcription (two separate API keys).
 
 ### 2.4 Procedure used
 
@@ -134,7 +135,7 @@ flowchart LR
 1. To build a single web interface over two IndicDLP layout detectors (YOLOv10x and DocLayout-YOLO) for English and Bengali document pages.
 2. To improve recall on small and faint regions by multi-scale inference and ensemble fusion (Weighted Boxes Fusion), and to measure its effect against the single models.
 3. To make detection observable: a live region-by-region reveal, clickable boxes with coordinates and cutouts, and an interface and class names in English and Bengali that can be switched without re-running the models.
-4. To extract the text of each region with Gemini OCR and to support multi-page PDF input, batch processing and export as PNG, JSON, COCO JSON, PAGE-XML, HTML and reading-order text.
+4. To extract the text of each region with Gemini OCR, translate it into English, and support multi-page PDF input, batch processing and export as PNG, JSON, COCO JSON, PAGE-XML, HTML and reading-order text (with the English translation under each text).
 5. To benchmark the models and measure per-class AP of the single models, the multi-scale boost and ensemble fusion (with tuned fusion weights) on human-annotated pages, and to report the limitations honestly.
 
 *Hypothesis testing: none was carried out. Sample survey: none was conducted, so there is no target population.*
@@ -154,7 +155,7 @@ flowchart LR
     E --> F["Ensemble WBF<br/>across models, IoU 0.55"]
     F --> G["Reading order<br/>(XY-cut)"]
     G --> H["Streamlit UI:<br/>PDF, batch, reveal, click"]
-    H --> I["OCR, ESPCN upscale,<br/>PNG / JSON / COCO / PAGE-XML / HTML / TXT"]
+    H --> I["OCR + English translation, ESPCN upscale,<br/>PNG / JSON / COCO / PAGE-XML / HTML / TXT"]
     I --> J["benchmark.py and<br/>evaluate_fusion.py"]
 ```
 
@@ -304,7 +305,7 @@ The ensemble returned more regions than both single models on every one of the 1
 | YOLOv10x boxes kept in the Ensemble | 99.2 % |
 | DocLayout-YOLO boxes kept in the Ensemble | 99.4 % |
 
-OCR was not timed: the app reads text with Gemini (cloud) and the text reference for Batch 06 is the human-checked transcription (Section 5.6).
+OCR was not timed here: the app reads text with Gemini (cloud) and the text reference for Batch 06 is the human-checked transcription (Section 5.6). Inside the app, the Results section has live OCR and Translation benchmark tables that time the Gemini requests of the current session (they depend on the network and on Gemini's rate limits, so they are not comparable with the detector timings above).
 
 ### 5.3 Inferential analysis
 
@@ -472,13 +473,13 @@ ResNet-18 produced 241 fewer false positives and 64 more false negatives than th
 - **Equal fusion weights are kept.** They scored best on the tuning pages (98.4 vs 97.7 for 1.0 / 1.5).
 - **Weak spots are consistent.** Small page furniture, hierarchical classes (headline, list and question levels) and rare classes get the lowest confidence.
 
-**Limitations.** Rectangular boxes only; the reading order is a geometric XY-cut, not a learned model (it can fail on interleaved or overlapping boxes), and it has not been scored against human reading-order labels; the OCR text is assembled in that order, but the OCR itself is Gemini (cloud) and was not scored in this project; PDFs are rendered at 150 dpi and capped at 200 pages; Bengali and Indic label translations need native-speaker review; the two released detectors were not re-trained on IndicDLP (only one fine-tune on 40 newspaper pages was run); the speed benchmark covers one newspaper from one period; the accuracy evaluation covers one newspaper from one period with 10 coarse classes; Gemini OCR sends region images to Google.
+**Limitations.** Rectangular boxes only; the reading order is a geometric XY-cut, not a learned model (it can fail on interleaved or overlapping boxes), and it has not been scored against human reading-order labels; the OCR text is assembled in that order, but the OCR itself is Gemini (cloud) and was not scored in this project, and the English translation is Gemini's too and was not scored either (there are no human reference translations of these pages; it was only read through on samples); PDFs are rendered at 150 dpi and capped at 200 pages; Bengali and Indic label translations need native-speaker review; the two released detectors were not re-trained on IndicDLP (only one fine-tune on 40 newspaper pages was run); the speed benchmark covers one newspaper from one period; the accuracy evaluation covers one newspaper from one period with 10 coarse classes; Gemini OCR sends region images to Google, and the translation sends the OCR text to Google. On the Gemini free tier a model allows about 15 requests a minute, so reading and translating a page of about 120 regions takes around ten minutes, and a Gemini overload (503/504) can pause it.
 
 **Recommendations for future work**
 
 1. Run `evaluate_fusion.py` on the IndicDLP validation and test splits (per-class AP over all 42 classes) and re-tune the fusion weights there; the weights tuned on newspaper pages are not independent evidence.
 2. Obtain independently annotated pages (not started from the ensemble's output) so the fusion gain can be measured without bias, and add a significance test.
-3. Collect human reading-order labels, evaluate the XY-cut against them and train a learned reading-order model; score Gemini and any Bengali-specialised OCR against the human-checked transcription of Batch 06 in `Rajdip_Dhar/`.
+3. Collect human reading-order labels, evaluate the XY-cut against them and train a learned reading-order model; score Gemini and any Bengali-specialised OCR against the human-checked transcription of Batch 06 in `Rajdip_Dhar/`, and have a Bengali reader write reference English translations for a sample of regions so the translation can be scored too.
 4. Test the fine-tuned detector on other newspapers and on English pages, repeat with several seeds, and merge the 10-class scheme back into the 42-class output (or fine-tune all 42 classes) so the app can offer it next to the original models.
 5. Add per-page quality controls to the batch mode (retry, resume, per-page settings) and larger PDF support.
 6. For the group work (group report): split the advertisement evaluation by issue rather than by crop, measure Bengali character and word error rates against direct human transcriptions, and add human reading-order and article-grouping annotations to test how regions connect across columns and pages.
