@@ -8,7 +8,7 @@ ensemble-boxes>=1.0.9    # box fusion for the multi-scale boost and Ensemble Fus
 huggingface_hub          # imported by doclayout-yolo
 pillow>=10
 numpy
-opencv-contrib-python   # cv2.dnn_superres for the ESPCN x2 crop upscaler
+opencv-contrib-python<5  # cv2.dnn_superres for the ESPCN x2 crop upscaler (OpenCV 5 cannot load ESPCN_x2.pb)
 scikit-learn          # ad classifier benchmark metrics (train_benchmark.py)
 matplotlib
 pyyaml
