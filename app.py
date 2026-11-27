@@ -1487,7 +1487,6 @@ def main() -> None:
             st.session_state["sig"] = sig
             st.divider()
             analyse(image, cfg, lang)
-            st.balloons()
         if st.session_state.get("sig") == sig:
             summary(name, lang)
 
