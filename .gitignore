@@ -27,3 +27,8 @@ out/
 backup/
 backend*.log
 ocr_progress.json
+
+# CV fine-tune working copies (page images duplicated from batch_06/) and the Kaggle upload bundle
+data/cv_batch06/
+kaggle_pack/
+kaggle_pack.zip

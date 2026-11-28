@@ -39,7 +39,7 @@ This project builds a web application, the Live Layout Studio, that puts two of 
 It adds multi-scale inference and Weighted Boxes Fusion to merge several passes or models into one prediction.
 It animates detection region by region, is available in English and Bengali (interface and 42 class names), reads the text of each region with Gemini OCR, and writes an English translation of it below the text.
 Multi-page PDFs can be processed as a batch, and results export as PNG, JSON, COCO JSON, PAGE-XML, HTML and text in reading order.
-The published checkpoints (57.7 and 54.5 mAP[50:95]) are used as released, and one of them is also fine-tuned on annotated Bengali newspaper pages.
+The published checkpoints (57.7 and 54.5 mAP[50:95]) are used as released, and YOLOv10x is also fine-tuned on the annotated Bengali newspaper pages with 5-fold cross-validation.
 On 50 held-out, human-corrected Bengali newspaper pages the ensemble reached 97.9 mAP[50:95] against 89.8 and 90.3 for the two boosted single models, at about 0.37 s per page on a GPU. These figures are circular (the annotators corrected the ensemble's own output, Section 5.4), so they show agreement with that output rather than independent accuracy.
 The system makes layout detectors usable and inspectable, and its limits are listed for future work.
 The work is the author's part of an eight-intern group project on 800 pages of the Bengali newspaper *Jugantar* (1946, National Digital Library of India): the author annotated Batch 06 of that collection and built the Live Layout Studio (Section 2.7).
@@ -190,7 +190,7 @@ flowchart LR
 - **Training.** **The released checkpoints were not re-trained from scratch; the only training done here is the Batch 06 fine-tune below.** The authors fine-tuned both from pretrained weights (YOLOv10x: UED-mini; DocLayout-YOLO: DocSynth-300K) with mosaic, scale and colour augmentation, and with flips and rotation switched off so text is never mirrored. Training and evaluation scripts for DocLayout-YOLO are included in `doclayout-yolo/`.
 - **Train / validation / test split.** The split is the dataset's own, taken from the region counts published with it: 1,465,652 training, 186,284 validation and 184,392 test regions (about 80 / 10 / 10 %). It was not changed here.
 - **Validation of this project's pipeline.** Speed, number and confidence of detections and agreement between models were measured on the 100 Batch 06 pages (Section 5.2); those measures need no ground truth. Accuracy is measured against human annotation (Section 5.4). Split: 50 even-numbered pages tune the fusion weights, the other 50 are held out; the detectors themselves are not trained on either.
-- **Fine-tuning (done, one experiment).** `finetune_batch06.py` fine-tunes YOLOv10x from the IndicDLP checkpoint on 40 of the 50 even-numbered Batch 06 pages (10 more select the best checkpoint; 40 epochs, 1024 px, batch 2, no flips) with a new 10-class head, and scores it on the same 50 held-out pages as Section 5.4.
+- **Fine-tuning (done: 5-fold cross-validation plus a final model).** `cv_finetune.py` fine-tunes YOLOv10x from the IndicDLP checkpoint on all 100 annotated Batch 06 pages (`Rajdip_Dhar/`, 4 classes: Headline, Subtitle, BodyText, Caption; Image boxes were removed). Pages are sorted and page *i* goes to test fold *i* mod 5, so every page is scored by a model that never saw it. In each fold 70 pages train, 10 select the best checkpoint and 20 are the test pages; 40 epochs, 1024 px, batch 2, early-stopping patience 15, no flips or rotation, seed 0. A sixth model is trained on 90 pages (the same 10 pages choose the checkpoint) so that every page influences it: `weights/yolov10x_batch06_cv_final.pt`. DocLayout-YOLO was **not** fine-tuned (the plan was dropped); it appears only as an untouched baseline.
 - **Not done.** No learned reading-order model was built (the export has no human reading-order labels) and no OCR engine was scored. The text side of Batch 06 is the human-checked transcription in `Rajdip_Dhar/` (Section 5.6), which is the reference an OCR engine would be scored against.
 
 ### 4.5 Tools and code
@@ -207,7 +207,8 @@ flowchart LR
 | `benchmark.py` / `benchmark_results.json` | Speed and agreement benchmark on the 100 pages of `batch_06/`, and its output |
 | `evaluate_fusion.py`, `detmetrics.py` | Per-class AP evaluation and fusion-weight tuning (IndicDLP YOLO format or a Label Studio export) |
 | `batch06_evaluation_*.json/.md`, `batch06_fusion_weights.json` | Results of that evaluation on Batch 06 |
-| `finetune_batch06.py`, `batch06_finetune_results.json` | Fine-tuning of YOLOv10x on the annotated pages and its held-out scores |
+| `cv_finetune.py`, `cv_batch06_results.json` | 5-fold cross-validated fine-tuning of YOLOv10x on the 100 annotated pages (`train`, `eval`), and its scores |
+| `finetune_batch06.py`, `batch06_finetune_results.json` | The earlier single 40-page fine-tune (superseded by the cross-validation) |
 | `ocr_reference_stats.py`, `batch06_ocr_reference.json` | Statistics of the human-checked OCR text of the 100 Batch 06 pages, read from `Rajdip_Dhar/2_readable_export/json` |
 | `layout_order.py` | XY-cut reading order and reading-order text assembly |
 | `exports.py` | COCO JSON, PAGE-XML and HTML writers (OCR text and its English translation) |
@@ -353,29 +354,29 @@ Equal weights (1.0) are best, so `batch06_fusion_weights.json` equals the defaul
 
 **Caveats.** (1) The circularity above. (2) Caption (22 held-out boxes) is too small for a reliable AP. (3) One newspaper and period only.
 
-### 5.5 Fine-tuning on the annotated pages
+### 5.5 Fine-tuning on the annotated pages (5-fold cross-validation)
 
-YOLOv10x fine-tuned on 40 Batch 06 pages (`weights/yolov10x_batch06_ft.pt`, not committed), trained and scored on the original page images, on the same 50 held-out pages and with the same metric as Section 5.4:
+YOLOv10x was fine-tuned on the 100 annotated pages with the cross-validation described in Section 4.4 (`python cv_finetune.py train`, then `python cv_finetune.py eval`). Every page is predicted by the one fold model that never saw it, at 1024 and 1280 px, and scored with the same metric as Section 5.4. The "original" rows run the untouched checkpoints on the same 100 pages (their labels are mapped to the four classes).
 
-```
-python finetune_batch06.py --export export_2026-11-21 --images batch_06
-```
-
-| Pipeline (50 held-out pages) | mAP50 | mAP[50:95] |
+| Pipeline (100 pages) | mAP50 | mAP[50:95] |
 |---|---|---|
-| Ensemble fusion of the two original models (Section 5.4) | 99.5 | 97.9 |
-| **Fine-tuned YOLOv10x, single scale** | 72.0 | 65.4 |
-| **Fine-tuned YOLOv10x, multi-scale boost** | 73.1 | 67.1 |
+| Ensemble fusion of the two original models | 99.3 | 97.7 |
+| Original DocLayout-YOLO, boost | 94.3 | 91.3 |
+| Original YOLOv10x, boost | 93.0 | 89.1 |
+| Original YOLOv10x, single scale | 88.8 | 83.8 |
+| **Fine-tuned YOLOv10x (cross-validated), boost** | 76.3 | 70.7 |
+| **Fine-tuned YOLOv10x (cross-validated), single scale** | 75.4 | 69.7 |
 
-| Class | GT boxes | AP[50:95], single | AP[50:95], boost |
-|---|---|---|---|
-| Headline | 683 | 77.1 | 79.2 |
-| Subtitle | 745 | 69.9 | 72.3 |
-| BodyText | 2963 | 86.1 | 86.9 |
-| Caption | 22 | 14.2 | 16.2 |
-| Image | 693 | 79.5 | 80.8 |
+| Class | GT boxes | Original YOLOv10x, single | Fine-tuned (CV), single | Fine-tuned (CV), boost |
+|---|---|---|---|---|
+| Headline | 1,251 | 83.0 | 80.3 | 81.9 |
+| Subtitle | 1,530 | 73.8 | 74.8 | 76.4 |
+| BodyText | 5,232 | 92.8 | 90.4 | 91.0 |
+| Caption | 61 | 85.4 | 33.2 | 33.5 |
 
-(The mAP50 and mAP[50:95] columns average over the 10 classes in the model's head, of which five have no ground truth and are skipped.) The fine-tuned model scores **below** the untouched ensemble here (67.1 vs 97.9), which is the opposite of the earlier result, and the reason is the circularity of Section 5.4: the labels now follow the ensemble's box style, which a model trained on 40 pages cannot match. This comparison therefore cannot show whether fine-tuning helps. It is a one-run result (seed 0, no repeats) on one newspaper; the earlier large gains on Folio and Header cannot be reproduced because those classes are no longer annotated.
+AP[50:95] per class. Per-fold mAP[50:95] of the fine-tuned boost: 66.5, 76.5, 76.6, 68.9, 73.2 (mean 72.3, range 66.5-76.6).
+
+**Reading the result.** Fine-tuning did **not** beat the originals: 70.7 against 89.1 for the same model before fine-tuning. Headline, BodyText and Subtitle land close to (Subtitle slightly above) the originals, and almost the whole gap is Caption, which has only 61 boxes in 100 pages (about 12 per fold), so the model has too few examples to keep what the checkpoint already knew. The originals are also flattered by the circularity of Section 5.4 (the annotators corrected their own output), whereas the cross-validated scores are the honest, unseen-page ones, so the two groups of rows are not on equal footing. The final model trained on 90 pages is not scored here, because every page is already used. The fine-tuned detector is not used in the app. One seed, one newspaper, four classes.
 
 ### 5.6 OCR text of Batch 06 (human-checked reference)
 
@@ -468,19 +469,19 @@ ResNet-18 produced 241 fewer false positives and 64 more false negatives than th
 - **Ensemble fusion increases coverage.** On the 100 Batch 06 pages it returned 10,193 regions against 7,966 and 8,222 for the single models, and kept 99.2 % and 99.4 % of their boxes. The two detectors agree on only about 84-86 % of their boxes, so they are complementary.
 - **The cost is acceptable.** About 0.37 s per page for the full boosted ensemble on a GPU, against 0.07-0.08 s for one model at one size.
 - **Fusion agrees best with the human-corrected annotations, but that is circular.** On 50 held-out pages, mAP[50:95] was 84.1 / 85.0 (single scale), 89.8 / 90.3 (multi-scale boost) and 97.9 (ensemble). Because the annotations started from this ensemble's output, this is not independent evidence of accuracy. On the IndicDLP test split the published figures are 57.7 (YOLOv10x) and 54.5 (DocLayout-YOLO); `evaluate_fusion.py` can repeat that evaluation, but the dataset was not available here.
-- **Fine-tuning could not be shown to help.** Fine-tuned YOLOv10x reached 65.4 mAP[50:95] (67.1 with the boost) on the held-out pages, below the ensemble's 97.9, because the labels follow the ensemble's own box style. One run, one newspaper, five annotated classes.
+- **Fine-tuning did not help.** With 5-fold cross-validation on all 100 pages, fine-tuned YOLOv10x reached 70.7 mAP[50:95] (boost) on pages it had not seen, against 89.1 for the original checkpoint and 97.7 for the ensemble. Nearly all of the loss is Caption (33 vs 85 AP; 61 boxes only). The originals' scores are circular, so the gap is partly inflated. One seed, one newspaper, four classes; DocLayout-YOLO was not fine-tuned.
 - **The Batch 06 text is human-checked.** All 8,074 annotated regions of the 100 pages carry a transcription (99.7 % of the letters are Bengali), which can serve as the reference for scoring any OCR engine.
 - **Equal fusion weights are kept.** They scored best on the tuning pages (98.4 vs 97.7 for 1.0 / 1.5).
 - **Weak spots are consistent.** Small page furniture, hierarchical classes (headline, list and question levels) and rare classes get the lowest confidence.
 
-**Limitations.** Rectangular boxes only; the reading order is a geometric XY-cut, not a learned model (it can fail on interleaved or overlapping boxes), and it has not been scored against human reading-order labels; the OCR text is assembled in that order, but the OCR itself is Gemini (cloud) and was not scored in this project, and the English translation is Gemini's too and was not scored either (there are no human reference translations of these pages; it was only read through on samples); PDFs are rendered at 150 dpi and capped at 200 pages; Bengali and Indic label translations need native-speaker review; the two released detectors were not re-trained on IndicDLP (only one fine-tune on 40 newspaper pages was run); the speed benchmark covers one newspaper from one period; the accuracy evaluation covers one newspaper from one period with 10 coarse classes; Gemini OCR sends region images to Google, and the translation sends the OCR text to Google. On the Gemini free tier a model allows about 15 requests a minute, so reading and translating a page of about 120 regions takes around ten minutes, and a Gemini overload (503/504) can pause it.
+**Limitations.** Rectangular boxes only; the reading order is a geometric XY-cut, not a learned model (it can fail on interleaved or overlapping boxes), and it has not been scored against human reading-order labels; the OCR text is assembled in that order, but the OCR itself is Gemini (cloud) and was not scored in this project, and the English translation is Gemini's too and was not scored either (there are no human reference translations of these pages; it was only read through on samples); PDFs are rendered at 150 dpi and capped at 200 pages; Bengali and Indic label translations need native-speaker review; the two released detectors were not re-trained on IndicDLP (only YOLOv10x was fine-tuned, with 5-fold cross-validation on the 100 newspaper pages); the speed benchmark covers one newspaper from one period; the accuracy evaluation covers one newspaper from one period with 10 coarse classes; Gemini OCR sends region images to Google, and the translation sends the OCR text to Google. On the Gemini free tier a model allows about 15 requests a minute, so reading and translating a page of about 120 regions takes around ten minutes, and a Gemini overload (503/504) can pause it.
 
 **Recommendations for future work**
 
 1. Run `evaluate_fusion.py` on the IndicDLP validation and test splits (per-class AP over all 42 classes) and re-tune the fusion weights there; the weights tuned on newspaper pages are not independent evidence.
 2. Obtain independently annotated pages (not started from the ensemble's output) so the fusion gain can be measured without bias, and add a significance test.
 3. Collect human reading-order labels, evaluate the XY-cut against them and train a learned reading-order model; score Gemini and any Bengali-specialised OCR against the human-checked transcription of Batch 06 in `Rajdip_Dhar/`, and have a Bengali reader write reference English translations for a sample of regions so the translation can be scored too.
-4. Test the fine-tuned detector on other newspapers and on English pages, repeat with several seeds, and merge the 10-class scheme back into the 42-class output (or fine-tune all 42 classes) so the app can offer it next to the original models.
+4. Annotate more Caption boxes (or freeze the backbone and mix IndicDLP pages in) so fine-tuning stops forgetting rare classes; repeat with several seeds, fine-tune DocLayout-YOLO the same way, and test on other newspapers and on English pages. Merge the 4-class scheme back into the 42-class output before offering a fine-tuned model in the app.
 5. Add per-page quality controls to the batch mode (retry, resume, per-page settings) and larger PDF support.
 6. For the group work (group report): split the advertisement evaluation by issue rather than by crop, measure Bengali character and word error rates against direct human transcriptions, and add human reading-order and article-grouping annotations to test how regions connect across columns and pages.
 
